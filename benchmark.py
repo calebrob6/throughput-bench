@@ -11,14 +11,14 @@ Usage examples:
     # Quick test with one model
     python benchmark.py --gpu-id 0 --models resnet50
 
-    # Manual batch size sweep (legacy mode)
+    # Manual batch size sweep
     python benchmark.py --gpu-id 0 --batch-sizes 1 8 32 64
-
-    # CPU benchmark with varying thread counts
-    python benchmark.py --device cpu --num-threads 1 4 8
 
     # Only classification, AMP precision
     python benchmark.py --gpu-id 0 --tasks classification --precisions amp
+
+    # Pure GPU compute (no DataLoader overhead)
+    python benchmark.py --gpu-id 0 --no-dataloader
 """
 
 import argparse
@@ -55,11 +55,9 @@ CSV_COLUMNS = [
     "precision",
     "compiled",
     "compile_mode",
-    "device",
     "gpu_name",
     "gpu_mem_gb",
     "batch_size",
-    "num_threads",
     "throughput_mean",
     "throughput_std",
     "throughput_median",
@@ -398,62 +396,6 @@ def _format_gpu_stats(total_images: int, batch_size: int,
         "num_iterations": total_images // batch_size,
     }
 
-
-def benchmark_cpu(
-    model: nn.Module,
-    dataloader,
-    num_warmup: int = 5,
-    min_timed_seconds: float = 30.0,
-) -> dict:
-    """Benchmark on CPU using time.perf_counter."""
-    data_iter = iter(dataloader)
-    for _ in range(num_warmup):
-        try:
-            images, _ = next(data_iter)
-        except StopIteration:
-            data_iter = iter(dataloader)
-            images, _ = next(data_iter)
-        with torch.no_grad():
-            _ = model(images)
-
-    batch_size = dataloader.batch_size
-    timings_ms: list[float] = []
-    total_elapsed = 0.0
-    data_iter = iter(dataloader)
-
-    while total_elapsed < min_timed_seconds:
-        try:
-            images, _ = next(data_iter)
-        except StopIteration:
-            data_iter = iter(dataloader)
-            images, _ = next(data_iter)
-        t0 = time.perf_counter()
-        with torch.no_grad():
-            _ = model(images)
-        t1 = time.perf_counter()
-        elapsed_ms = (t1 - t0) * 1000.0
-        timings_ms.append(elapsed_ms)
-        total_elapsed += elapsed_ms / 1000.0
-
-    timings = np.array(timings_ms)
-    total_images = batch_size * len(timings)
-    total_time_s = timings.sum() / 1000.0
-    aggregate_throughput = total_images / total_time_s
-    per_iter_rates = batch_size / (timings / 1000.0)
-
-    return {
-        "throughput_mean": float(aggregate_throughput),
-        "throughput_std": float(np.std(per_iter_rates)),
-        "throughput_median": float(np.median(per_iter_rates)),
-        "throughput_min": float(np.min(per_iter_rates)),
-        "throughput_max": float(np.max(per_iter_rates)),
-        "latency_mean_ms": float(np.mean(timings)),
-        "latency_std_ms": float(np.std(timings)),
-        "peak_memory_mb": 0.0,
-        "num_iterations": len(timings),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Single benchmark run helper
 # ---------------------------------------------------------------------------
@@ -481,33 +423,22 @@ def run_single_benchmark(
         if task == "segmentation":
             task_params = count_params(model)
 
-        if args.device == "cuda":
-            torch.cuda.reset_peak_memory_stats()
-            if args.no_dataloader:
-                stats = benchmark_gpu_preallocated(
-                    model, batch_size, precision, device,
-                    num_warmup=args.warmup,
-                    min_timed_seconds=args.timed_seconds,
-                )
-            else:
-                dl = create_dataloader(
-                    task=task, batch_size=batch_size, num_workers=8,
-                    prefetch_factor=2,
-                    length=max(batch_size * 500, 10_000),
-                )
-                stats = benchmark_gpu(
-                    model, dl, precision, device,
-                    num_warmup=args.warmup,
-                    min_timed_seconds=args.timed_seconds,
-                )
+        torch.cuda.reset_peak_memory_stats()
+        if args.no_dataloader:
+            stats = benchmark_gpu_preallocated(
+                model, batch_size, precision, device,
+                num_warmup=args.warmup,
+                min_timed_seconds=args.timed_seconds,
+            )
         else:
             dl = create_dataloader(
-                task=task, batch_size=batch_size, num_workers=0,
+                task=task, batch_size=batch_size, num_workers=8,
+                prefetch_factor=2,
                 length=max(batch_size * 500, 10_000),
             )
-            stats = benchmark_cpu(
-                model, dl,
-                num_warmup=max(2, args.warmup // 5),
+            stats = benchmark_gpu(
+                model, dl, precision, device,
+                num_warmup=args.warmup,
                 min_timed_seconds=args.timed_seconds,
             )
 
@@ -521,11 +452,9 @@ def run_single_benchmark(
             "precision": precision,
             "compiled": actual_compiled,
             "compile_mode": actual_compile_mode,
-            "device": args.device,
             "gpu_name": gpu_name,
             "gpu_mem_gb": f"{gpu_mem_gb:.1f}",
             "batch_size": batch_size,
-            "num_threads": "",
             "throughput_mean": f"{stats['throughput_mean']:.2f}",
             "throughput_std": f"{stats['throughput_std']:.2f}",
             "throughput_median": f"{stats['throughput_median']:.2f}",
@@ -559,46 +488,35 @@ def run_benchmark(args):
 
     auto_batch = args.batch_sizes is None
 
-    # Determine device
-    if args.device == "cuda":
-        gpu_id = args.gpu_id
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        device = torch.device("cuda:0")
-        gpu_name = get_gpu_name(0)
-        gpu_mem_gb = get_gpu_mem_gb(0)
-        print(f"🖥  Device: GPU {gpu_id} ({gpu_name}, {gpu_mem_gb:.0f} GB)")
+    gpu_id = args.gpu_id
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    device = torch.device("cuda:0")
+    gpu_name = get_gpu_name(0)
+    gpu_mem_gb = get_gpu_mem_gb(0)
+    print(f"🖥  Device: GPU {gpu_id} ({gpu_name}, {gpu_mem_gb:.0f} GB)")
 
-        if not check_gpu_free(gpu_id):
-            if args.force:
-                print(f"⚠  WARNING: Other processes detected on GPU {gpu_id}. "
-                      f"Results may be unreliable. (--force used, continuing)")
-            else:
-                print(f"❌ ERROR: Other processes detected on GPU {gpu_id}.")
-                print(f"   Benchmarks require an idle GPU for reliable results.")
-                print(f"   Use --force to override this check.")
-                sys.exit(1)
+    if not check_gpu_free(gpu_id):
+        if args.force:
+            print(f"⚠  WARNING: Other processes detected on GPU {gpu_id}. "
+                  f"Results may be unreliable. (--force used, continuing)")
+        else:
+            print(f"❌ ERROR: Other processes detected on GPU {gpu_id}.")
+            print(f"   Benchmarks require an idle GPU for reliable results.")
+            print(f"   Use --force to override this check.")
+            sys.exit(1)
 
-        # Auto-detect output path if user didn't specify
-        if args.output == "auto":
-            slug = get_gpu_slug()
-            output_path = Path(f"results/{slug}.csv")
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-    else:
-        device = torch.device("cpu")
-        gpu_name = "N/A"
-        gpu_mem_gb = 0.0
-        print(f"🖥  Device: CPU")
-        if args.output == "auto":
-            output_path = Path("results/cpu.csv")
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Auto-detect output path if user didn't specify
+    if args.output == "auto":
+        slug = get_gpu_slug()
+        output_path = Path(f"results/{slug}.csv")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Save hardware info
-    if args.device == "cuda":
-        hw_info = collect_hardware_info(args.gpu_id)
-        hw_path = output_path.parent / (output_path.stem + "_hardware.json")
-        with open(hw_path, "w") as f:
-            json.dump(hw_info, f, indent=2)
-        print(f"💾 Hardware info: {hw_path}")
+    hw_info = collect_hardware_info(args.gpu_id)
+    hw_path = output_path.parent / (output_path.stem + "_hardware.json")
+    with open(hw_path, "w") as f:
+        json.dump(hw_info, f, indent=2)
+    print(f"💾 Hardware info: {hw_path}")
 
     model_configs = get_models(args.models if args.models else None)
     print(f"📋 Models: {len(model_configs)}")
@@ -644,7 +562,7 @@ def run_benchmark(args):
                 continue
 
             # Determine batch sizes for this model+task
-            if auto_batch and args.device == "cuda":
+            if auto_batch:
                 print(f"  🔍 Finding max batch size for {task}...", end=" ",
                       flush=True)
                 max_bs = find_max_batch_size(mc, task, device)
@@ -659,8 +577,6 @@ def run_benchmark(args):
                 batch_sizes_to_run = [32]
 
             for prec in args.precisions:
-                if args.device == "cpu" and prec in ("fp16", "amp"):
-                    continue
 
                 for cm in args.compile_modes:
                     for bs in batch_sizes_to_run:
@@ -695,20 +611,18 @@ def run_benchmark(args):
                                     "task": task, "precision": prec,
                                     "compiled": cm != "none",
                                     "compile_mode": cm,
-                                    "device": args.device,
                                     "gpu_name": gpu_name,
                                     "gpu_mem_gb": f"{gpu_mem_gb:.1f}",
                                     "batch_size": bs,
-                                    "num_threads": "",
                                     "throughput_mean": "OOM",
                                     **{c: "" for c in CSV_COLUMNS
                                        if c not in {
                                            "model_name", "display_name",
                                            "model_family", "model_type",
                                            "task", "precision", "compiled",
-                                           "compile_mode", "device",
+                                           "compile_mode",
                                            "gpu_name", "gpu_mem_gb",
-                                           "batch_size", "num_threads",
+                                           "batch_size",
                                            "throughput_mean",
                                        }},
                                 })
@@ -742,8 +656,6 @@ def parse_args():
         description="GeoSpeedy: Geospatial model throughput benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--device", choices=["cuda", "cpu"], default="cuda",
-                    help="Device to benchmark on (default: cuda)")
     p.add_argument("--gpu-id", type=int, default=0,
                     help="GPU index to use (default: 0)")
     p.add_argument("--models", nargs="+", default=None,
@@ -761,8 +673,6 @@ def parse_args():
     p.add_argument("--batch-sizes", nargs="+", type=int, default=None,
                     help="Manual batch sizes (default: auto-detect max "
                          "power-of-2 that fits in GPU memory)")
-    p.add_argument("--num-threads", nargs="+", type=int, default=None,
-                    help="CPU thread counts (CPU mode only)")
     p.add_argument("--warmup", type=int, default=20,
                     help="Number of warmup iterations (default: 20)")
     p.add_argument("--timed-seconds", type=float, default=30.0,

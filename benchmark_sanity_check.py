@@ -23,7 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--runtime-seconds", type=float, default=60.0)
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--no-dataloader", action="store_true",

@@ -59,7 +59,7 @@ def load_results(path: str) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     # Deduplicate: keep the last entry per unique config
     dedup_keys = ["model_name", "task", "precision", "compile_mode",
-                   "batch_size", "device"]
+                   "batch_size"]
     dedup_keys = [k for k in dedup_keys if k in df.columns]
     if "gpu_name" in df.columns:
         dedup_keys.append("gpu_name")
@@ -79,7 +79,6 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
         (df["task"] == task)
         & (df["precision"] == precision)
         & (df["compiled"].astype(str).str.lower() == str(compiled).lower())
-        & (df["device"] == "cuda")
     )
     if batch_size is not None:
         mask = mask & (df["batch_size"] == batch_size)
@@ -164,7 +163,6 @@ def speedup_chart(df: pd.DataFrame, output_dir: Path,
         (df["task"] == task)
         & (df["batch_size"] == batch_size)
         & (df["compiled"].astype(str).str.lower() == "false")
-        & (df["device"] == "cuda")
     )
     sub = df[mask].copy()
     if sub.empty:
@@ -204,7 +202,6 @@ def compile_chart(df: pd.DataFrame, output_dir: Path,
         (df["task"] == task)
         & (df["batch_size"] == batch_size)
         & (df["precision"] == precision)
-        & (df["device"] == "cuda")
     )
     sub = df[mask].copy()
     if sub.empty:
@@ -245,7 +242,6 @@ def batch_scaling_chart(df: pd.DataFrame, output_dir: Path,
         (df["task"] == task)
         & (df["precision"] == precision)
         & (df["compiled"].astype(str).str.lower() == "false")
-        & (df["device"] == "cuda")
     )
     sub = df[mask].copy()
     if sub.empty:
@@ -285,7 +281,6 @@ def cnn_vs_vit_summary(df: pd.DataFrame, output_dir: Path,
         (df["batch_size"] == batch_size)
         & (df["precision"] == precision)
         & (df["compiled"].astype(str).str.lower() == "false")
-        & (df["device"] == "cuda")
     )
     sub = df[mask].copy()
     if sub.empty:
