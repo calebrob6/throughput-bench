@@ -36,6 +36,8 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this benchmark.")
 
+    torch.set_float32_matmul_precision("high")
+
     device = torch.device("cuda", args.device)
 
     model = timm.create_model("resnet18", pretrained=False, num_classes=10)

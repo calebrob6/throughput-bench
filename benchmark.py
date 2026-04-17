@@ -535,6 +535,13 @@ def run_benchmark(args):
     gpu_mem_gb = get_gpu_mem_gb(0)
     print(f"🖥  Device: GPU {gpu_id} ({gpu_name}, {gpu_mem_gb:.0f} GB)")
 
+    # Enable TF32 for fp32 matmuls (Ampere+). Matches what virtually all
+    # "fp32" benchmarks on modern NVIDIA hardware actually measure; without
+    # this, the fp32 precision mode runs strict IEEE-754 and looks
+    # artificially slow on H100/A100.
+    torch.set_float32_matmul_precision("high")
+    print('🔢 float32 matmul precision: "high" (TF32 enabled on fp32 matmuls)')
+
     if not check_gpu_free(gpu_id):
         if args.force:
             print(
