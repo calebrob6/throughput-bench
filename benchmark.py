@@ -37,11 +37,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import timm
-
-try:
-    import segmentation_models_pytorch as smp
-except ImportError:
-    smp = None
+import segmentation_models_pytorch as smp
 
 from data import create_dataloader
 from models import MODEL_REGISTRY, ModelConfig, get_models
@@ -117,7 +113,7 @@ def collect_hardware_info(gpu_id: int) -> dict:
         "cuda_version": get_cuda_version(),
         "pytorch_version": torch.__version__,
         "timm_version": timm.__version__,
-        "smp_version": smp.__version__ if smp else "N/A",
+        "smp_version": smp.__version__,
         "python_version": platform.python_version(),
         "os": platform.system(),
         "cpu": platform.processor() or "unknown",
@@ -198,8 +194,6 @@ def create_model_for_task(
                                   num_classes=10)
     elif task == "segmentation":
         if not config.supports_segmentation:
-            return None
-        if smp is None:
             return None
         model = smp.Unet(
             encoder_name=config.smp_encoder_name,
