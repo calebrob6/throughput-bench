@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoSpeedy — Globe Race</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0a0e17;
+    color: #e0e6f0;
+    overflow: hidden;
+    height: 100vh;
+  }
+  #app { display: flex; height: 100vh; }
+
+  /* Sidebar */
+  #sidebar {
+    width: 360px;
+    background: #111827;
+    border-right: 1px solid #1e293b;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    z-index: 10;
+  }
+  h1 {
+    font-size: 22px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 800;
+  }
+  h1 span { font-size: 13px; opacity: 0.7; display: block; font-weight: 400;
+    -webkit-text-fill-color: #94a3b8; }
+  label { font-size: 12px; color: #94a3b8; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 2px; }
+  select, input[type=range] {
+    width: 100%;
+    padding: 8px 10px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e0e6f0;
+    font-size: 13px;
+  }
+  select:focus { outline: none; border-color: #60a5fa; }
+  .control-group { display: flex; flex-direction: column; gap: 4px; }
+  .model-card {
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #334155;
+  }
+  .model-card.a { background: rgba(59,130,246,0.1); border-color: #3b82f6; }
+  .model-card.b { background: rgba(239,68,68,0.1); border-color: #ef4444; }
+  .model-card .name { font-weight: 700; font-size: 15px; }
+  .model-card .stats { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .model-card .bar-wrap {
+    height: 6px; background: #1e293b; border-radius: 3px; margin-top: 8px;
+    overflow: hidden;
+  }
+  .model-card.a .bar { background: #3b82f6; }
+  .model-card.b .bar { background: #ef4444; }
+  .bar { height: 100%; width: 0%; border-radius: 3px; transition: width 0.1s; }
+
+  #btn-race {
+    padding: 12px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  #btn-race:hover { opacity: 0.9; }
+  #btn-race:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #quote-box {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 60px;
+    border-left: 3px solid #8b5cf6;
+  }
+
+  .gsd-info {
+    font-size: 11px;
+    color: #64748b;
+    padding: 8px;
+    background: #0f172a;
+    border-radius: 6px;
+  }
+
+  /* Globe */
+  #globe-container {
+    flex: 1;
+    position: relative;
+  }
+  canvas { display: block; }
+
+  /* Overlay stats */
+  #overlay {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    display: flex;
+    gap: 12px;
+    z-index: 5;
+  }
+  .stat-pill {
+    background: rgba(17,24,39,0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    text-align: center;
+  }
+  .stat-pill .val { font-size: 18px; font-weight: 700; }
+  .stat-pill.a .val { color: #60a5fa; }
+  .stat-pill.b .val { color: #f87171; }
+
+  #timer {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    background: rgba(17,24,39,0.85);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    z-index: 5;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="sidebar">
+    <h1>🌍 GeoSpeedy <span>Model Inference Race</span></h1>
+
+    <div class="control-group">
+      <label>GSD (Ground Sample Distance)</label>
+      <select id="sel-gsd">
+        <option value="0.3">0.3 m — High-res commercial</option>
+        <option value="1">1 m — NAIP / aerial</option>
+        <option value="10" selected>10 m — Sentinel-2</option>
+        <option value="30">30 m — Landsat</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Speedup Factor</label>
+      <input type="range" id="sl-speed" min="1" max="4" step="0.1" value="3">
+      <span id="speed-label" style="font-size:12px;color:#94a3b8;">1000×</span>
+    </div>
+
+    <div class="model-card a">
+      <label>Model A (Blue)</label>
+      <select id="sel-a"></select>
+      <div class="name" id="name-a">—</div>
+      <div class="stats" id="stats-a"></div>
+      <div class="bar-wrap"><div class="bar" id="bar-a"></div></div>
+    </div>
+
+    <div class="model-card b">
+      <label>Model B (Red)</label>
+      <select id="sel-b"></select>
+      <div class="name" id="name-b">—</div>
+      <div class="stats" id="stats-b"></div>
+      <div class="bar-wrap"><div class="bar" id="bar-b"></div></div>
+    </div>
+
+    <button id="btn-race">▶  Start Race</button>
+
+    <div id="quote-box">Select two models and press Start Race to see how
+      quickly they could map the Earth.</div>
+
+    <div class="gsd-info">
+      <strong>Sq km assumptions:</strong> Each 224×224 patch covers
+      (224 × GSD)² m². No overlap. Pure compute — no I/O.
+      Single GPU throughput.
+    </div>
+  </div>
+
+  <div id="globe-container">
+    <div id="overlay">
+      <div class="stat-pill a">
+        <div>Model A</div>
+        <div class="val" id="km-a">0</div>
+        <div>km² covered</div>
+      </div>
+      <div class="stat-pill b">
+        <div>Model B</div>
+        <div class="val" id="km-b">0</div>
+        <div>km² covered</div>
+      </div>
+    </div>
+    <div id="timer">⏱ 0.0s</div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Benchmark data (will be replaced by CSV data) ─────────────────────────
+// Format: { name, display, family, type, throughput (img/s at best GPU config) }
+// This is placeholder data; replace with actual results after benchmarking.
+let MODELS = [
+  { name:"mobilenetv3_small_100", display:"MobileNetV3-S", family:"MobileNet", type:"cnn", throughput:21732 },
+  { name:"resnet18", display:"ResNet-18", family:"ResNet", type:"cnn", throughput:9847 },
+  { name:"regnety_004", display:"RegNetY-400MF", family:"RegNet", type:"cnn", throughput:9573 },
+  { name:"vit_tiny_patch16_224", display:"ViT-Ti/16", family:"ViT", type:"vit", throughput:7101 },
+  { name:"mobilenetv3_large_100", display:"MobileNetV3-L", family:"MobileNet", type:"cnn", throughput:6566 },
+  { name:"efficientnet_b0", display:"EfficientNet-B0", family:"EfficientNet", type:"cnn", throughput:6199 },
+  { name:"vit_small_patch16_224", display:"ViT-S/16", family:"ViT", type:"vit", throughput:4217 },
+  { name:"convnext_tiny", display:"ConvNeXt-T", family:"ConvNeXt", type:"cnn", throughput:3534 },
+  { name:"deit3_small_patch16_224", display:"DeiT3-S/16", family:"DeiT", type:"vit", throughput:3047 },
+  { name:"resnet50", display:"ResNet-50", family:"ResNet", type:"cnn", throughput:2540 },
+  { name:"coatnet_0_224", display:"CoAtNet-0", family:"CoAtNet", type:"hybrid", throughput:2332 },
+  { name:"regnety_040", display:"RegNetY-4GF", family:"RegNet", type:"cnn", throughput:2133 },
+  { name:"swin_tiny_patch4_window7_224", display:"Swin-T", family:"Swin", type:"vit", throughput:2130 },
+  { name:"efficientnet_b4", display:"EfficientNet-B4", family:"EfficientNet", type:"cnn", throughput:1793 },
+  { name:"convnext_small", display:"ConvNeXt-S", family:"ConvNeXt", type:"cnn", throughput:1731 },
+  { name:"resnet101", display:"ResNet-101", family:"ResNet", type:"cnn", throughput:1504 },
+  { name:"vit_base_patch16_224", display:"ViT-B/16", family:"ViT", type:"vit", throughput:1503 },
+  { name:"beit_base_patch16_224", display:"BEiT-B/16", family:"BEiT", type:"vit", throughput:1285 },
+  { name:"convnext_base", display:"ConvNeXt-B", family:"ConvNeXt", type:"cnn", throughput:1230 },
+  { name:"swin_small_patch4_window7_224", display:"Swin-S", family:"Swin", type:"vit", throughput:1210 },
+  { name:"swin_base_patch4_window7_224", display:"Swin-B", family:"Swin", type:"vit", throughput:1134 },
+  { name:"deit3_base_patch16_224", display:"DeiT3-B/16", family:"DeiT", type:"vit", throughput:1100 },
+  { name:"resnet152", display:"ResNet-152", family:"ResNet", type:"cnn", throughput:1062 },
+  { name:"efficientnet_b7", display:"EfficientNet-B7", family:"EfficientNet", type:"cnn", throughput:768 },
+  { name:"convnext_large", display:"ConvNeXt-L", family:"ConvNeXt", type:"cnn", throughput:675 },
+  { name:"coatnet_2_224", display:"CoAtNet-2", family:"CoAtNet", type:"hybrid", throughput:504 },
+  { name:"beit_large_patch16_224", display:"BEiT-L/16", family:"BEiT", type:"vit", throughput:381 },
+  { name:"swin_large_patch4_window7_224", display:"Swin-L", family:"Swin", type:"vit", throughput:372 },
+  { name:"vit_large_patch16_224", display:"ViT-L/16", family:"ViT", type:"vit", throughput:354 },
+];
+
+// Try to load actual results from CSV
+async function loadCSVResults() {
+  try {
+    const resp = await fetch('../results/benchmark_results.csv');
+    if (!resp.ok) return;
+    const text = await resp.text();
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return;
+    const headers = lines[0].split(',');
+    const nameIdx = headers.indexOf('model_name');
+    const displayIdx = headers.indexOf('display_name');
+    const familyIdx = headers.indexOf('model_family');
+    const typeIdx = headers.indexOf('model_type');
+    const tpIdx = headers.indexOf('throughput_mean');
+    const precIdx = headers.indexOf('precision');
+    const bsIdx = headers.indexOf('batch_size');
+    const taskIdx = headers.indexOf('task');
+    const compiledIdx = headers.indexOf('compiled');
+    const deviceIdx = headers.indexOf('device');
+
+    // Find best GPU throughput per model (AMP/fp16, bs=32, not compiled, classification)
+    const best = {};
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',');
+      if (cols[deviceIdx] !== 'cuda') continue;
+      if (cols[taskIdx] !== 'classification') continue;
+      if (cols[tpIdx] === 'OOM' || !cols[tpIdx]) continue;
+      const tp = parseFloat(cols[tpIdx]);
+      if (isNaN(tp)) continue;
+      const key = cols[nameIdx];
+      if (!best[key] || tp > best[key].throughput) {
+        best[key] = {
+          name: cols[nameIdx],
+          display: cols[displayIdx],
+          family: cols[familyIdx],
+          type: cols[typeIdx],
+          throughput: tp
+        };
+      }
+    }
+    if (Object.keys(best).length > 0) {
+      MODELS = Object.values(best);
+      MODELS.sort((a,b) => b.throughput - a.throughput);
+      console.log(`Loaded ${MODELS.length} models from CSV`);
+    }
+  } catch(e) {
+    console.log('Using placeholder data:', e.message);
+  }
+}
+
+// ── Globe setup ────────────────────────────────────────────────────────────
+const container = document.getElementById('globe-container');
+const W = container.clientWidth, H = container.clientHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 1000);
+camera.position.set(0, 0, 3.2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.minDistance = 1.8;
+controls.maxDistance = 6;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+
+// Lights
+scene.add(new THREE.AmbientLight(0x404060, 2));
+const sunLight = new THREE.DirectionalLight(0xffffff, 2);
+sunLight.position.set(5, 3, 5);
+scene.add(sunLight);
+
+// Globe sphere
+const RADIUS = 1;
+const globeGeo = new THREE.SphereGeometry(RADIUS, 64, 64);
+const globeMat = new THREE.MeshPhongMaterial({
+  color: 0x1a2744,
+  emissive: 0x0a1020,
+  specular: 0x222244,
+  shininess: 20,
+});
+const globe = new THREE.Mesh(globeGeo, globeMat);
+scene.add(globe);
+
+// Atmosphere glow
+const atmosGeo = new THREE.SphereGeometry(RADIUS * 1.02, 64, 64);
+const atmosMat = new THREE.MeshBasicMaterial({
+  color: 0x3b82f6,
+  transparent: true,
+  opacity: 0.06,
+  side: THREE.BackSide,
+});
+scene.add(new THREE.Mesh(atmosGeo, atmosMat));
+
+// Graticule (lat/lon lines)
+const gratGroup = new THREE.Group();
+for (let lat = -60; lat <= 60; lat += 30) {
+  const pts = [];
+  for (let lon = 0; lon <= 360; lon += 2) {
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lon - 180) * Math.PI / 180;
+    const r = RADIUS * 1.001;
+    pts.push(new THREE.Vector3(
+      -r * Math.sin(phi) * Math.cos(theta),
+       r * Math.cos(phi),
+       r * Math.sin(phi) * Math.sin(theta)
+    ));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  gratGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({
+    color: 0x334155, transparent: true, opacity: 0.4
+  })));
+}
+for (let lon = -180; lon < 180; lon += 30) {
+  const pts = [];
+  for (let lat = -90; lat <= 90; lat += 2) {
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lon - 180) * Math.PI / 180;
+    const r = RADIUS * 1.001;
+    pts.push(new THREE.Vector3(
+      -r * Math.sin(phi) * Math.cos(theta),
+       r * Math.cos(phi),
+       r * Math.sin(phi) * Math.sin(theta)
+    ));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  gratGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({
+    color: 0x334155, transparent: true, opacity: 0.4
+  })));
+}
+scene.add(gratGroup);
+
+// ── Coverage cells ─────────────────────────────────────────────────────────
+// Divide globe into cells by latitude bands, sweep west→east
+const CELL_LAT_STEP = 4;   // degrees per cell
+const CELL_LON_STEP = 4;
+const cells = [];
+
+for (let lat = -80; lat < 80; lat += CELL_LAT_STEP) {
+  for (let lon = -180; lon < 180; lon += CELL_LON_STEP) {
+    cells.push({ lat: lat + CELL_LAT_STEP/2, lon: lon + CELL_LON_STEP/2,
+                 coveredA: false, coveredB: false });
+  }
+}
+
+// Instanced mesh for cell dots
+const cellCount = cells.length;
+const dotGeo = new THREE.SphereGeometry(0.012, 4, 4);
+
+const dotsA = new THREE.InstancedMesh(dotGeo,
+  new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.0 }),
+  cellCount);
+const dotsB = new THREE.InstancedMesh(dotGeo,
+  new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.0 }),
+  cellCount);
+
+const dummy = new THREE.Object3D();
+const cellMatrices = [];
+cells.forEach((c, i) => {
+  const phi = (90 - c.lat) * Math.PI / 180;
+  const theta = (c.lon - 180) * Math.PI / 180;
+  const r = RADIUS * 1.005;
+  dummy.position.set(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+  dummy.updateMatrix();
+  dotsA.setMatrixAt(i, dummy.matrix);
+  dotsB.setMatrixAt(i, dummy.matrix);
+  cellMatrices.push(dummy.matrix.clone());
+});
+dotsA.instanceMatrix.needsUpdate = true;
+dotsB.instanceMatrix.needsUpdate = true;
+scene.add(dotsA);
+scene.add(dotsB);
+
+// Per-instance color arrays
+const colorsA = new Float32Array(cellCount * 3);
+const colorsB = new Float32Array(cellCount * 3);
+dotsA.instanceColor = new THREE.InstancedBufferAttribute(colorsA, 3);
+dotsB.instanceColor = new THREE.InstancedBufferAttribute(colorsB, 3);
+
+const BLUE = new THREE.Color(0x3b82f6);
+const RED  = new THREE.Color(0xef4444);
+const DIM  = new THREE.Color(0x1e293b);
+
+function resetCells() {
+  cells.forEach((c, i) => {
+    c.coveredA = false;
+    c.coveredB = false;
+    DIM.toArray(colorsA, i * 3);
+    DIM.toArray(colorsB, i * 3);
+  });
+  dotsA.instanceColor.needsUpdate = true;
+  dotsB.instanceColor.needsUpdate = true;
+  dotsA.material.opacity = 0.0;
+  dotsB.material.opacity = 0.0;
+}
+
+// ── UI wiring ──────────────────────────────────────────────────────────────
+const selA = document.getElementById('sel-a');
+const selB = document.getElementById('sel-b');
+const selGSD = document.getElementById('sel-gsd');
+const slSpeed = document.getElementById('sl-speed');
+const speedLabel = document.getElementById('speed-label');
+const btnRace = document.getElementById('btn-race');
+const quoteBox = document.getElementById('quote-box');
+const nameA = document.getElementById('name-a');
+const nameB = document.getElementById('name-b');
+const statsA = document.getElementById('stats-a');
+const statsB = document.getElementById('stats-b');
+const barA = document.getElementById('bar-a');
+const barB = document.getElementById('bar-b');
+const kmA = document.getElementById('km-a');
+const kmB = document.getElementById('km-b');
+const timerEl = document.getElementById('timer');
+
+function populateSelects() {
+  selA.innerHTML = '';
+  selB.innerHTML = '';
+  MODELS.forEach((m, i) => {
+    const tag = m.type === 'cnn' ? '🟢 CNN' : m.type === 'vit' ? '🔴 ViT' : '🟡 Hybrid';
+    const text = `${tag}  ${m.display}  (${Math.round(m.throughput)} img/s)`;
+    selA.add(new Option(text, i));
+    selB.add(new Option(text, i));
+  });
+  // Default: pick a fast CNN and a slow ViT
+  const vitL = MODELS.findIndex(m => m.display.includes('ViT-L'));
+  const effB0 = MODELS.findIndex(m => m.display.includes('EfficientNet-B0'));
+  if (effB0 >= 0) selA.value = effB0;
+  if (vitL >= 0) selB.value = vitL;
+  updateCards();
+}
+
+function patchArea() {
+  const gsd = parseFloat(selGSD.value);
+  return (224 * gsd) ** 2 / 1e6;  // km²
+}
+
+function speedupFactor() {
+  return 10 ** parseFloat(slSpeed.value);
+}
+
+function updateCards() {
+  const mA = MODELS[selA.value];
+  const mB = MODELS[selB.value];
+  nameA.textContent = mA.display;
+  nameB.textContent = mB.display;
+  const area = patchArea();
+  statsA.textContent = `${Math.round(mA.throughput)} img/s · ${(mA.throughput * area).toFixed(0)} km²/s`;
+  statsB.textContent = `${Math.round(mB.throughput)} img/s · ${(mB.throughput * area).toFixed(0)} km²/s`;
+}
+
+selA.addEventListener('change', updateCards);
+selB.addEventListener('change', updateCards);
+selGSD.addEventListener('change', updateCards);
+slSpeed.addEventListener('input', () => {
+  speedLabel.textContent = Math.round(speedupFactor()) + '×';
+});
+
+// ── Race logic ─────────────────────────────────────────────────────────────
+let racing = false;
+let progressA = 0, progressB = 0;
+let raceStartTime = 0;
+let winnerAnnounced = false;
+
+const EARTH_LAND_KM2 = 150_000_000;
+
+function formatKm(km) {
+  if (km >= 1e6) return (km / 1e6).toFixed(1) + 'M';
+  if (km >= 1e3) return (km / 1e3).toFixed(0) + 'K';
+  return Math.round(km).toString();
+}
+
+btnRace.addEventListener('click', () => {
+  if (racing) {
+    racing = false;
+    btnRace.textContent = '▶  Start Race';
+    return;
+  }
+
+  resetCells();
+  progressA = 0;
+  progressB = 0;
+  winnerAnnounced = false;
+  barA.style.width = '0%';
+  barB.style.width = '0%';
+  kmA.textContent = '0';
+  kmB.textContent = '0';
+  timerEl.textContent = '⏱ 0.0s';
+  quoteBox.textContent = 'Race in progress…';
+
+  dotsA.material.opacity = 0.9;
+  dotsB.material.opacity = 0.7;
+
+  racing = true;
+  raceStartTime = performance.now();
+  btnRace.textContent = '⏹  Stop Race';
+  controls.autoRotateSpeed = 1.5;
+});
+
+function updateRace(dt) {
+  if (!racing) return;
+
+  const mA = MODELS[selA.value];
+  const mB = MODELS[selB.value];
+  const area = patchArea();
+  const speed = speedupFactor();
+
+  // Patches processed this frame (simulated time = dt * speedup)
+  const patchesA = mA.throughput * dt * speed;
+  const patchesB = mB.throughput * dt * speed;
+
+  // Map patches to cells
+  const cellsPerPatch = cellCount / (EARTH_LAND_KM2 / area);
+  progressA += patchesA * cellsPerPatch;
+  progressB += patchesB * cellsPerPatch;
+
+  const covA = Math.min(Math.floor(progressA), cellCount);
+  const covB = Math.min(Math.floor(progressB), cellCount);
+
+  // Light up cells
+  for (let i = 0; i < covA; i++) {
+    if (!cells[i].coveredA) {
+      cells[i].coveredA = true;
+      BLUE.toArray(colorsA, i * 3);
+    }
+  }
+  for (let i = 0; i < covB; i++) {
+    if (!cells[i].coveredB) {
+      cells[i].coveredB = true;
+      RED.toArray(colorsB, i * 3);
+    }
+  }
+  dotsA.instanceColor.needsUpdate = true;
+  dotsB.instanceColor.needsUpdate = true;
+
+  // Update UI
+  const pctA = Math.min(covA / cellCount * 100, 100);
+  const pctB = Math.min(covB / cellCount * 100, 100);
+  barA.style.width = pctA + '%';
+  barB.style.width = pctB + '%';
+
+  const kmCovA = progressA / cellsPerPatch * area;
+  const kmCovB = progressB / cellsPerPatch * area;
+  kmA.textContent = formatKm(kmCovA);
+  kmB.textContent = formatKm(kmCovB);
+
+  const elapsed = (performance.now() - raceStartTime) / 1000;
+  timerEl.textContent = `⏱ ${elapsed.toFixed(1)}s`;
+
+  // Check for winner
+  if (!winnerAnnounced && (covA >= cellCount || covB >= cellCount)) {
+    const winner = covA >= cellCount ? mA : mB;
+    const loser = covA >= cellCount ? mB : mA;
+    const loserPct = covA >= cellCount ? pctB : pctA;
+    const ratio = (winner.throughput / loser.throughput).toFixed(1);
+
+    // Determine geographic position of loser
+    const loserCov = covA >= cellCount ? covB : covA;
+    const loserCell = cells[Math.min(loserCov, cellCount - 1)];
+    const continent = getContinent(loserCell.lat, loserCell.lon);
+
+    quoteBox.innerHTML = `🏆 <strong>${winner.display}</strong> finished mapping Earth while ` +
+      `<strong>${loser.display}</strong> is still in <strong>${continent}</strong> ` +
+      `(${loserPct.toFixed(0)}% done).<br>` +
+      `<em>${winner.display} is ${ratio}× faster.</em>`;
+
+    winnerAnnounced = true;
+
+    // Let the loser catch up visually, then stop
+    setTimeout(() => {
+      racing = false;
+      btnRace.textContent = '▶  Start Race';
+      controls.autoRotateSpeed = 0.5;
+    }, 3000);
+  }
+}
+
+function getContinent(lat, lon) {
+  // Rough continent assignment by lat/lon
+  if (lat > 35 && lon > -30 && lon < 60) return 'Europe';
+  if (lat > 10 && lon >= 60 && lon < 150) return 'Asia';
+  if (lat <= 10 && lat > -50 && lon >= 60 && lon < 150) return 'Southeast Asia';
+  if (lat > 25 && lon >= -170 && lon < -50) return 'North America';
+  if (lat <= 25 && lat > -60 && lon >= -90 && lon < -30) return 'South America';
+  if (lat > -40 && lat < 35 && lon >= -20 && lon < 55) return 'Africa';
+  if (lat < -10 && lon >= 100 && lon < 180) return 'Oceania';
+  if (lat > 60) return 'the Arctic';
+  if (lat < -60) return 'Antarctica';
+  if (lon >= 150 || lon < -150) return 'the Pacific';
+  return 'the Atlantic';
+}
+
+// ── Animation loop ─────────────────────────────────────────────────────────
+let prevTime = performance.now();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min((now - prevTime) / 1000, 0.1);
+  prevTime = now;
+
+  controls.update();
+  updateRace(dt);
+  renderer.render(scene, camera);
+}
+
+// ── Resize ─────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  const w = container.clientWidth, h = container.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+await loadCSVResults();
+populateSelects();
+resetCells();
+animate();
+
+</script>
+</body>
+</html>
