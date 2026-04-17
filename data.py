@@ -46,17 +46,21 @@ def create_dataloader(
     task: str = "classification",
     batch_size: int = 32,
     num_workers: int = 4,
+    prefetch_factor: int | None = 2,
     length: int = 10_000,
     **kwargs,
 ) -> DataLoader:
     """Create a DataLoader with random patches."""
     dataset = RandomPatchDataset(length=length, task=task)
-    return DataLoader(
-        dataset,
+    loader_kwargs = dict(
         batch_size=batch_size,
         num_workers=num_workers,
         pin_memory=True,
         drop_last=True,
-        persistent_workers=num_workers > 0,
         **kwargs,
     )
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        if prefetch_factor is not None:
+            loader_kwargs["prefetch_factor"] = prefetch_factor
+    return DataLoader(dataset, **loader_kwargs)
