@@ -11,7 +11,7 @@ cd geospeedy
 make setup
 
 # 2. Run the benchmark (uses GPU 0 by default)
-make benchmark
+make benchmark GPU_ID=0
 
 # 3. Check your results
 make visualize
