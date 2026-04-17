@@ -477,45 +477,102 @@ let MODELS = [
   { name:"vit_large_patch16_224", display:"ViT-L/16", family:"ViT", type:"vit", throughput:354 },
 ];
 
-async function loadCSVResults() {
+// Results live at results/{gpu_slug}.csv with a sidecar
+// {gpu_slug}_hardware.json. An optional results/index.json can list multiple
+// CSVs; otherwise we probe a small list of known paths.
+let HARDWARE = null;
+
+async function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',');
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',');
+    if (c.length < headers.length) continue;
+    const row = {};
+    for (let j = 0; j < headers.length; j++) row[headers[j]] = c[j];
+    rows.push(row);
+  }
+  return rows;
+}
+
+async function resolveCSVPath() {
+  // 1. Optional manifest listing CSVs (array of filenames or {csv, hardware}).
   try {
-    const resp = await fetch('../results/benchmark_results.csv');
-    if (!resp.ok) return;
-    const text = await resp.text();
-    const lines = text.trim().split('\n');
-    const headers = lines[0].split(',');
-    const idx = {
-      name: headers.indexOf('model_name'),
-      display: headers.indexOf('display_name'),
-      family: headers.indexOf('model_family'),
-      type: headers.indexOf('model_type'),
-      tp: headers.indexOf('throughput_mean'),
-      task: headers.indexOf('task'),
-      device: headers.indexOf('device'),
-      params: headers.indexOf('params_M'),
-      macs: headers.indexOf('macs_G'),
-      mem: headers.indexOf('peak_memory_mb'),
-    };
-    const best = {};
-    for (let i = 1; i < lines.length; i++) {
-      const c = lines[i].split(',');
-      if (c[idx.device] !== 'cuda' || c[idx.task] !== 'classification') continue;
-      const tp = parseFloat(c[idx.tp]);
-      if (isNaN(tp)) continue;
-      const key = c[idx.name];
-      const row = {
-        name: c[idx.name], display: c[idx.display],
-        family: c[idx.family], type: c[idx.type], throughput: tp,
-        params_M: parseFloat(c[idx.params]) || null,
-        macs_G:   parseFloat(c[idx.macs])   || null,
-        peak_mb:  parseFloat(c[idx.mem])    || null,
+    const r = await fetch('../results/index.json');
+    if (r.ok) {
+      const list = await r.json();
+      if (Array.isArray(list) && list.length) {
+        const first = list[0];
+        return typeof first === 'string'
+          ? '../results/' + first
+          : '../results/' + first.csv;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Known-good candidates (current + legacy).
+  const candidates = [
+    '../results/tesla_v100_sxm2_32gb.csv',
+    '../results/benchmark_results.csv',
+  ];
+  for (const url of candidates) {
+    try {
+      const r = await fetch(url, { method: 'HEAD' });
+      if (r.ok) return url;
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function loadCSVResults() {
+  const url = await resolveCSVPath();
+  if (!url) return;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const rows = await parseCSV(await r.text());
+    if (!rows.length) return;
+
+    // Merge CSV rows into defaults rather than replace, so models missing
+    // from a partial run still appear in the picker.
+    const byName = Object.fromEntries(MODELS.map(m => [m.name, { ...m }]));
+    for (const row of rows) {
+      if (row.task !== 'classification') continue;
+      const tp = parseFloat(row.throughput_mean);
+      if (!isFinite(tp)) continue;
+      const key = row.model_name;
+      const prev = byName[key];
+      // Keep the best (highest) throughput across precision/compile/bs combos.
+      if (prev && prev._fromCSV && prev.throughput >= tp) {
+        // Still capture params/macs/mem from any row even if not the best TP.
+        prev.params_M ??= parseFloat(row.params_M) || null;
+        prev.macs_G   ??= parseFloat(row.macs_G)   || null;
+        prev.peak_mb  ??= parseFloat(row.peak_memory_mb) || null;
+        continue;
+      }
+      byName[key] = {
+        name: key,
+        display: row.display_name || prev?.display || key,
+        family:  row.model_family || prev?.family  || 'Unknown',
+        type:    row.model_type   || prev?.type    || 'cnn',
+        throughput: tp,
+        params_M: parseFloat(row.params_M) || prev?.params_M || null,
+        macs_G:   parseFloat(row.macs_G)   || prev?.macs_G   || null,
+        peak_mb:  parseFloat(row.peak_memory_mb) || null,
+        _fromCSV: true,
       };
-      if (!best[key] || tp > best[key].throughput) best[key] = row;
     }
-    if (Object.keys(best).length) {
-      MODELS = Object.values(best).sort((a,b) => b.throughput - a.throughput);
-    }
-  } catch(_) { /* fall back to defaults */ }
+    MODELS = Object.values(byName).sort((a, b) => b.throughput - a.throughput);
+
+    // Sidecar hardware info, if present (same basename + _hardware.json).
+    try {
+      const hwUrl = url.replace(/\.csv$/, '_hardware.json');
+      const hwResp = await fetch(hwUrl);
+      if (hwResp.ok) HARDWARE = await hwResp.json();
+    } catch (_) {}
+  } catch (_) { /* fall back to defaults */ }
 }
 
 // ── Inline ray-casting point-in-polygon (no turf dep) ──────────────────────
@@ -679,6 +736,12 @@ document.getElementById('loading').classList.add('hidden');
 
 // ── UI wiring ──────────────────────────────────────────────────────────────
 await loadCSVResults();
+
+// Surface which hardware the numbers came from, right under the brand.
+if (HARDWARE?.gpu_name) {
+  const sub = document.querySelector('.brand .sub');
+  if (sub) sub.textContent = HARDWARE.gpu_name;
+}
 
 const $ = id => document.getElementById(id);
 const selA = $('sel-a'), selB = $('sel-b'), selGSD = $('sel-gsd');
