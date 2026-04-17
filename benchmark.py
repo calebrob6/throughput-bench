@@ -262,27 +262,27 @@ def find_max_batch_size(
 
 def benchmark_gpu(
     model: nn.Module,
-    dataloader,
+    batch_size: int,
     precision: str,
     device: torch.device,
     num_warmup: int = 20,
     min_timed_seconds: float = 30.0,
 ) -> dict:
-    """Benchmark on GPU using cuda Events for precise timing."""
+    """Benchmark on GPU using cuda Events for precise timing.
+
+    Pre-allocates a random batch on GPU to eliminate DataLoader overhead
+    and measure pure model compute throughput.
+    """
     use_amp = precision == "amp"
     use_fp16_input = precision == "fp16"
 
+    # Pre-allocate batch on GPU — reused every iteration
+    images = torch.randn(batch_size, 3, 224, 224, device=device)
+    if use_fp16_input:
+        images = images.half()
+
     # --- warmup ---
-    data_iter = iter(dataloader)
     for _ in range(num_warmup):
-        try:
-            images, _ = next(data_iter)
-        except StopIteration:
-            data_iter = iter(dataloader)
-            images, _ = next(data_iter)
-        images = images.to(device, non_blocking=True)
-        if use_fp16_input:
-            images = images.half()
         with torch.no_grad():
             if use_amp:
                 with torch.amp.autocast("cuda"):
@@ -295,22 +295,10 @@ def benchmark_gpu(
     torch.cuda.reset_peak_memory_stats()
 
     # --- timed iterations ---
-    batch_size = dataloader.batch_size
     timings_ms: list[float] = []
     total_elapsed = 0.0
-    data_iter = iter(dataloader)
 
     while total_elapsed < min_timed_seconds:
-        try:
-            images, _ = next(data_iter)
-        except StopIteration:
-            data_iter = iter(dataloader)
-            images, _ = next(data_iter)
-
-        images = images.to(device, non_blocking=True)
-        if use_fp16_input:
-            images = images.half()
-
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
 
@@ -327,6 +315,8 @@ def benchmark_gpu(
         elapsed_ms = start_event.elapsed_time(end_event)
         timings_ms.append(elapsed_ms)
         total_elapsed += elapsed_ms / 1000.0
+
+    del images
 
     timings = np.array(timings_ms)
     total_images = batch_size * len(timings)
@@ -430,20 +420,18 @@ def run_single_benchmark(
         if task == "segmentation":
             task_params = count_params(model)
 
-        dl_workers = 0 if args.device == "cpu" else args.num_workers
-        dl = create_dataloader(
-            task=task, batch_size=batch_size, num_workers=dl_workers,
-            length=max(batch_size * 500, 10_000),
-        )
-
         if args.device == "cuda":
             torch.cuda.reset_peak_memory_stats()
             stats = benchmark_gpu(
-                model, dl, precision, device,
+                model, batch_size, precision, device,
                 num_warmup=args.warmup,
                 min_timed_seconds=args.timed_seconds,
             )
         else:
+            dl = create_dataloader(
+                task=task, batch_size=batch_size, num_workers=0,
+                length=max(batch_size * 500, 10_000),
+            )
             stats = benchmark_cpu(
                 model, dl,
                 num_warmup=max(2, args.warmup // 5),
@@ -483,7 +471,7 @@ def run_single_benchmark(
     except torch.cuda.OutOfMemoryError:
         return "OOM"
     finally:
-        del model, dl
+        del model
         gpu_cleanup()
 
 
@@ -702,8 +690,6 @@ def parse_args():
                          "power-of-2 that fits in GPU memory)")
     p.add_argument("--num-threads", nargs="+", type=int, default=None,
                     help="CPU thread counts (CPU mode only)")
-    p.add_argument("--num-workers", type=int, default=4,
-                    help="DataLoader workers (default: 4)")
     p.add_argument("--warmup", type=int, default=20,
                     help="Number of warmup iterations (default: 20)")
     p.add_argument("--timed-seconds", type=float, default=30.0,

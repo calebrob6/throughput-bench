@@ -1,0 +1,4 @@
+model_name,display_name,model_family,model_type,task,precision,compiled,compile_mode,device,gpu_name,gpu_mem_gb,batch_size,num_threads,throughput_mean,throughput_std,throughput_median,throughput_min,throughput_max,pixels_per_sec,latency_mean_ms,latency_std_ms,params_M,macs_G,peak_memory_mb,pytorch_version,cuda_version,timestamp
+resnet18,ResNet-18,ResNet,cnn,classification,fp32,False,none,cuda,Tesla V100-SXM2-32GB,34.1,512,,4548.52,186.29,4582.12,1537.07,4607.25,228226526,112.564,13.524,11.18,3.63,3651.0,2.10.0+cu128,12.8,2026-04-17T14:18:01
+resnet18,ResNet-18,ResNet,cnn,classification,fp32,True,default,cuda,Tesla V100-SXM2-32GB,34.1,512,,4036.39,15.35,4036.86,3892.58,4062.36,202529942,126.846,0.491,11.18,3.63,4267.7,2.10.0+cu128,12.8,2026-04-17T14:19:11
+resnet18,ResNet-18,ResNet,cnn,classification,fp16,False,none,cuda,Tesla V100-SXM2-32GB,34.1,512,,8911.19,153.48,8931.92,6682.71,8950.95,447127683,57.456,1.230,11.18,3.63,2038.5,2.10.0+cu128,12.8,2026-04-17T14:21:26
