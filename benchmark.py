@@ -33,11 +33,10 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
+import segmentation_models_pytorch as smp
+import timm
 import torch
 import torch.nn as nn
-import timm
-import segmentation_models_pytorch as smp
 
 from data import create_dataloader
 from models import ModelConfig, get_models
@@ -120,13 +119,20 @@ def check_gpu_free(gpu_id: int) -> bool:
     """Check that the target GPU has no other processes running."""
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-compute-apps=pid,gpu_uuid",
-             "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,gpu_uuid",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         gpu_uuids_result = subprocess.run(
             ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         target_uuid = None
         for line in gpu_uuids_result.stdout.strip().split("\n"):
@@ -166,28 +172,29 @@ def count_params(model: nn.Module) -> float:
     return sum(p.numel() for p in model.parameters()) / 1e6
 
 
-def estimate_macs(model: nn.Module, input_shape: tuple = (1, 3, 224, 224),
-                  device: str = "cpu") -> float:
+def estimate_macs(
+    model: nn.Module, input_shape: tuple = (1, 3, 224, 224), device: str = "cpu"
+) -> float:
     from torch.utils.flop_counter import FlopCounterMode
+
     inp = torch.randn(*input_shape, device=device)
     with FlopCounterMode(display=False) as fcm:
         model(inp)
     return fcm.get_total_flops() / 1e9
 
 
-def create_model_for_task(
-    config: ModelConfig, task: str, device: torch.device
-) -> nn.Module | None:
+def create_model_for_task(config: ModelConfig, task: str, device: torch.device) -> nn.Module | None:
     """Instantiate a model for the given task. Returns None if unsupported."""
     if task == "classification":
-        model = timm.create_model(config.timm_name, pretrained=False,
-                                  num_classes=10)
+        model = timm.create_model(config.timm_name, pretrained=False, num_classes=10)
     elif task == "segmentation":
         if not config.supports_segmentation:
             return None
         model = smp.Unet(
             encoder_name=config.smp_encoder_name,
-            encoder_weights=None, in_channels=3, classes=10,
+            encoder_weights=None,
+            in_channels=3,
+            classes=10,
         )
     else:
         raise ValueError(f"Unknown task: {task}")
@@ -219,8 +226,11 @@ def apply_compile(model: nn.Module, compile_mode: str) -> tuple[nn.Module, bool]
 
 
 def find_max_batch_size(
-    config: ModelConfig, task: str, device: torch.device,
-    max_power: int = 9, num_validate: int = 3,
+    config: ModelConfig,
+    task: str,
+    device: torch.device,
+    max_power: int = 9,
+    num_validate: int = 3,
 ) -> int:
     """Find largest power-of-2 batch size that fits in GPU memory.
 
@@ -232,7 +242,7 @@ def find_max_batch_size(
     max_bs = 1
 
     for power in range(max_power + 1):  # 1, 2, 4, ..., 512
-        bs = 2 ** power
+        bs = 2**power
         gpu_cleanup()
         try:
             model = create_model_for_task(config, task, device)
@@ -379,8 +389,7 @@ def benchmark_gpu_preallocated(
     return _format_gpu_stats(total_images, batch_size, elapsed_s)
 
 
-def _format_gpu_stats(total_images: int, batch_size: int,
-                      elapsed_s: float) -> dict:
+def _format_gpu_stats(total_images: int, batch_size: int, elapsed_s: float) -> dict:
     throughput = total_images / elapsed_s
     peak_mem = torch.cuda.max_memory_allocated() / 1e6
     return {
@@ -395,14 +404,24 @@ def _format_gpu_stats(total_images: int, batch_size: int,
         "num_iterations": total_images // batch_size,
     }
 
+
 # ---------------------------------------------------------------------------
 # Single benchmark run helper
 # ---------------------------------------------------------------------------
 
+
 def run_single_benchmark(
-    mc: ModelConfig, task: str, precision: str, compile_mode: str,
-    batch_size: int, device: torch.device, args, gpu_name: str,
-    gpu_mem_gb: float, macs_g: float, params_m: float,
+    mc: ModelConfig,
+    task: str,
+    precision: str,
+    compile_mode: str,
+    batch_size: int,
+    device: torch.device,
+    args,
+    gpu_name: str,
+    gpu_mem_gb: float,
+    macs_g: float,
+    params_m: float,
 ) -> dict | None:
     """Run a single benchmark config. Returns a CSV row dict or None."""
     gpu_cleanup()
@@ -425,18 +444,26 @@ def run_single_benchmark(
         torch.cuda.reset_peak_memory_stats()
         if args.no_dataloader:
             stats = benchmark_gpu_preallocated(
-                model, batch_size, precision, device,
+                model,
+                batch_size,
+                precision,
+                device,
                 num_warmup=args.warmup,
                 min_timed_seconds=args.timed_seconds,
             )
         else:
             dl = create_dataloader(
-                task=task, batch_size=batch_size, num_workers=8,
+                task=task,
+                batch_size=batch_size,
+                num_workers=8,
                 prefetch_factor=2,
                 length=max(batch_size * 500, 10_000),
             )
             stats = benchmark_gpu(
-                model, dl, precision, device,
+                model,
+                dl,
+                precision,
+                device,
                 num_warmup=args.warmup,
                 min_timed_seconds=args.timed_seconds,
             )
@@ -496,12 +523,14 @@ def run_benchmark(args):
 
     if not check_gpu_free(gpu_id):
         if args.force:
-            print(f"⚠  WARNING: Other processes detected on GPU {gpu_id}. "
-                  f"Results may be unreliable. (--force used, continuing)")
+            print(
+                f"⚠  WARNING: Other processes detected on GPU {gpu_id}. "
+                f"Results may be unreliable. (--force used, continuing)"
+            )
         else:
             print(f"❌ ERROR: Other processes detected on GPU {gpu_id}.")
-            print(f"   Benchmarks require an idle GPU for reliable results.")
-            print(f"   Use --force to override this check.")
+            print("   Benchmarks require an idle GPU for reliable results.")
+            print("   Use --force to override this check.")
             sys.exit(1)
 
     # Auto-detect output path if user didn't specify
@@ -523,7 +552,7 @@ def run_benchmark(args):
     print(f"📋 Precisions: {args.precisions}")
     print(f"📋 Compile modes: {args.compile_modes}")
     if auto_batch:
-        print(f"📋 Batch size: auto (largest power-of-2 that fits)")
+        print("📋 Batch size: auto (largest power-of-2 that fits)")
     else:
         print(f"📋 Batch sizes: {args.batch_sizes}")
     print(f"📋 Timed seconds: {args.timed_seconds}")
@@ -538,15 +567,14 @@ def run_benchmark(args):
     completed = 0
 
     for mc in model_configs:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"  {mc.display_name} ({mc.timm_name}) — {mc.arch_type}")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
         # Compute MACs once on CPU
         macs_g, params_m = -1.0, -1.0
         try:
-            tmp = timm.create_model(mc.timm_name, pretrained=False,
-                                    num_classes=10)
+            tmp = timm.create_model(mc.timm_name, pretrained=False, num_classes=10)
             tmp.eval()
             params_m = count_params(tmp)
             macs_g = estimate_macs(tmp, device="cpu")
@@ -557,13 +585,12 @@ def run_benchmark(args):
 
         for task in args.tasks:
             if task == "segmentation" and not mc.supports_segmentation:
-                print(f"  ⏭ Skipping segmentation (not supported)")
+                print("  ⏭ Skipping segmentation (not supported)")
                 continue
 
             # Determine batch sizes for this model+task
             if auto_batch:
-                print(f"  🔍 Finding max batch size for {task}...", end=" ",
-                      flush=True)
+                print(f"  🔍 Finding max batch size for {task}...", end=" ", flush=True)
                 max_bs = find_max_batch_size(mc, task, device)
                 if max_bs == 0:
                     print("SKIP (model unsupported)")
@@ -576,55 +603,85 @@ def run_benchmark(args):
                 batch_sizes_to_run = [32]
 
             for prec in args.precisions:
-
                 for cm in args.compile_modes:
                     for bs in batch_sizes_to_run:
                         completed += 1
-                        label = (f"  [{completed}] {task} | {prec} | "
-                                 f"compile={cm} | bs={bs}")
+                        label = f"  [{completed}] {task} | {prec} | compile={cm} | bs={bs}"
                         print(label, end=" ... ", flush=True)
 
                         result = run_single_benchmark(
-                            mc, task, prec, cm, bs, device, args,
-                            gpu_name, gpu_mem_gb, macs_g, params_m,
+                            mc,
+                            task,
+                            prec,
+                            cm,
+                            bs,
+                            device,
+                            args,
+                            gpu_name,
+                            gpu_mem_gb,
+                            macs_g,
+                            params_m,
                         )
                         if result == "OOM":
                             # Step down batch size for compiled mode
                             if cm != "none" and bs > 1:
                                 stepped = bs // 2
-                                print(f"OOM → retrying bs={stepped}",
-                                      end=" ... ", flush=True)
+                                print(
+                                    f"OOM → retrying bs={stepped}",
+                                    end=" ... ",
+                                    flush=True,
+                                )
                                 result = run_single_benchmark(
-                                    mc, task, prec, cm, stepped, device,
-                                    args, gpu_name, gpu_mem_gb, macs_g,
+                                    mc,
+                                    task,
+                                    prec,
+                                    cm,
+                                    stepped,
+                                    device,
+                                    args,
+                                    gpu_name,
+                                    gpu_mem_gb,
+                                    macs_g,
                                     params_m,
                                 )
                             if result == "OOM" or result is None:
                                 print("OOM")
                                 # Write OOM row
-                                writer.writerow({
-                                    "model_name": mc.timm_name,
-                                    "display_name": mc.display_name,
-                                    "model_family": mc.family,
-                                    "model_type": mc.arch_type,
-                                    "task": task, "precision": prec,
-                                    "compiled": cm != "none",
-                                    "compile_mode": cm,
-                                    "gpu_name": gpu_name,
-                                    "gpu_mem_gb": f"{gpu_mem_gb:.1f}",
-                                    "batch_size": bs,
-                                    "throughput_mean": "OOM",
-                                    **{c: "" for c in CSV_COLUMNS
-                                       if c not in {
-                                           "model_name", "display_name",
-                                           "model_family", "model_type",
-                                           "task", "precision", "compiled",
-                                           "compile_mode",
-                                           "gpu_name", "gpu_mem_gb",
-                                           "batch_size",
-                                           "throughput_mean",
-                                       }},
-                                })
+                                writer.writerow(
+                                    {
+                                        "model_name": mc.timm_name,
+                                        "display_name": mc.display_name,
+                                        "model_family": mc.family,
+                                        "model_type": mc.arch_type,
+                                        "task": task,
+                                        "precision": prec,
+                                        "compiled": cm != "none",
+                                        "compile_mode": cm,
+                                        "gpu_name": gpu_name,
+                                        "gpu_mem_gb": f"{gpu_mem_gb:.1f}",
+                                        "batch_size": bs,
+                                        "throughput_mean": "OOM",
+                                        **{
+                                            c: ""
+                                            for c in CSV_COLUMNS
+                                            if c
+                                            not in {
+                                                "model_name",
+                                                "display_name",
+                                                "model_family",
+                                                "model_type",
+                                                "task",
+                                                "precision",
+                                                "compiled",
+                                                "compile_mode",
+                                                "gpu_name",
+                                                "gpu_mem_gb",
+                                                "batch_size",
+                                                "throughput_mean",
+                                            }
+                                        },
+                                    }
+                                )
                                 csv_file.flush()
                                 continue
 
@@ -655,34 +712,65 @@ def parse_args():
         description="ThroughputBencher: Geospatial model throughput benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--gpu-id", type=int, default=0,
-                    help="GPU index to use (default: 0)")
-    p.add_argument("--models", nargs="+", default=None,
-                    help="Filter to specific timm model names")
-    p.add_argument("--tasks", nargs="+",
-                    default=["classification", "segmentation"],
-                    choices=["classification", "segmentation"],
-                    help="Tasks to benchmark")
-    p.add_argument("--precisions", nargs="+", default=["fp32", "fp16", "amp"],
-                    choices=["fp32", "fp16", "amp"],
-                    help="Precision modes")
-    p.add_argument("--compile-modes", nargs="+", default=["none", "default"],
-                    choices=["none", "default", "max-autotune"],
-                    help="torch.compile modes")
-    p.add_argument("--batch-sizes", nargs="+", type=int, default=None,
-                    help="Manual batch sizes (default: auto-detect max "
-                         "power-of-2 that fits in GPU memory)")
-    p.add_argument("--warmup", type=int, default=20,
-                    help="Number of warmup iterations (default: 20)")
-    p.add_argument("--timed-seconds", type=float, default=30.0,
-                    help="Minimum seconds to time (default: 30)")
-    p.add_argument("--output", type=str, default="auto",
-                    help="Output CSV path (default: auto-detect from GPU)")
-    p.add_argument("--force", action="store_true",
-                    help="Run even if other processes are using the GPU")
-    p.add_argument("--no-dataloader", action="store_true",
-                    help="Use pre-allocated GPU batch instead of DataLoader "
-                         "(maximizes GPU utilization, measures pure compute)")
+    p.add_argument("--gpu-id", type=int, default=0, help="GPU index to use (default: 0)")
+    p.add_argument("--models", nargs="+", default=None, help="Filter to specific timm model names")
+    p.add_argument(
+        "--tasks",
+        nargs="+",
+        default=["classification", "segmentation"],
+        choices=["classification", "segmentation"],
+        help="Tasks to benchmark",
+    )
+    p.add_argument(
+        "--precisions",
+        nargs="+",
+        default=["fp32", "fp16", "amp"],
+        choices=["fp32", "fp16", "amp"],
+        help="Precision modes",
+    )
+    p.add_argument(
+        "--compile-modes",
+        nargs="+",
+        default=["none", "default"],
+        choices=["none", "default", "max-autotune"],
+        help="torch.compile modes",
+    )
+    p.add_argument(
+        "--batch-sizes",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Manual batch sizes (default: auto-detect max power-of-2 that fits in GPU memory)",
+    )
+    p.add_argument(
+        "--warmup",
+        type=int,
+        default=20,
+        help="Number of warmup iterations (default: 20)",
+    )
+    p.add_argument(
+        "--timed-seconds",
+        type=float,
+        default=30.0,
+        help="Minimum seconds to time (default: 30)",
+    )
+    p.add_argument(
+        "--output",
+        type=str,
+        default="auto",
+        help="Output CSV path (default: auto-detect from GPU)",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even if other processes are using the GPU",
+    )
+    p.add_argument(
+        "--no-dataloader",
+        action="store_true",
+        help="Use pre-allocated GPU batch instead of DataLoader "
+        "(maximizes GPU utilization, measures pure compute)",
+    )
     return p.parse_args()
 
 

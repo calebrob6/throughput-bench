@@ -12,13 +12,14 @@ import argparse
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-from models import FAMILY_COLORS, MODEL_REGISTRY
+from models import FAMILY_COLORS
 
 sns.set_theme(style="whitegrid", font_scale=1.1)
 
@@ -52,14 +53,21 @@ def load_results(path: str) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     # Drop OOM rows for plotting
     df = df[df["throughput_mean"] != "OOM"].copy()
-    for col in ["throughput_mean", "throughput_std", "throughput_median",
-                 "pixels_per_sec", "params_M", "macs_G", "peak_memory_mb",
-                 "latency_mean_ms", "batch_size"]:
+    for col in [
+        "throughput_mean",
+        "throughput_std",
+        "throughput_median",
+        "pixels_per_sec",
+        "params_M",
+        "macs_G",
+        "peak_memory_mb",
+        "latency_mean_ms",
+        "batch_size",
+    ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     # Deduplicate: keep the last entry per unique config
-    dedup_keys = ["model_name", "task", "precision", "compile_mode",
-                   "batch_size"]
+    dedup_keys = ["model_name", "task", "precision", "compile_mode", "batch_size"]
     dedup_keys = [k for k in dedup_keys if k in df.columns]
     if "gpu_name" in df.columns:
         dedup_keys.append("gpu_name")
@@ -67,9 +75,14 @@ def load_results(path: str) -> pd.DataFrame:
     return df
 
 
-def bubble_chart(df: pd.DataFrame, output_dir: Path,
-                 task: str = "classification", precision: str = "amp",
-                 batch_size: int | None = None, compiled: bool = False):
+def bubble_chart(
+    df: pd.DataFrame,
+    output_dir: Path,
+    task: str = "classification",
+    precision: str = "amp",
+    batch_size: int | None = None,
+    compiled: bool = False,
+):
     """Hero chart: MACs vs throughput, bubbles sized by params, colored by family.
 
     If ``batch_size`` is None, picks the best throughput per model
@@ -100,9 +113,12 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
         fam_data = sub[sub["model_family"] == fam].sort_values("macs_G")
         if len(fam_data) > 1:
             ax.plot(
-                fam_data["macs_G"], fam_data["throughput_mean"],
+                fam_data["macs_G"],
+                fam_data["throughput_mean"],
                 color=FAMILY_COLORS.get(fam, "#999999"),
-                linewidth=1.5, alpha=0.5, zorder=1,
+                linewidth=1.5,
+                alpha=0.5,
+                zorder=1,
             )
 
     # Scatter bubbles
@@ -110,15 +126,22 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
         color = FAMILY_COLORS.get(row["model_family"], "#999999")
         size = max(row["params_M"] * 3, 30)
         ax.scatter(
-            row["macs_G"], row["throughput_mean"],
-            s=size, c=color, alpha=0.8, edgecolors="white",
-            linewidth=0.8, zorder=2,
+            row["macs_G"],
+            row["throughput_mean"],
+            s=size,
+            c=color,
+            alpha=0.8,
+            edgecolors="white",
+            linewidth=0.8,
+            zorder=2,
         )
         ax.annotate(
             row["display_name"],
             (row["macs_G"], row["throughput_mean"]),
-            textcoords="offset points", xytext=(6, 6),
-            fontsize=7, alpha=0.85,
+            textcoords="offset points",
+            xytext=(6, 6),
+            fontsize=7,
+            alpha=0.85,
         )
 
     ax.set_xscale("log")
@@ -131,7 +154,8 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
         f"Inference Throughput vs Compute Cost — "
         f"{task.title()} | {precision.upper()}{compile_label} | "
         f"{bs_label}",
-        fontsize=14, fontweight="bold",
+        fontsize=14,
+        fontweight="bold",
     )
 
     # Legend for families
@@ -139,12 +163,23 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
     for fam in sorted(FAMILY_COLORS.keys()):
         if fam in sub["model_family"].values:
             handles.append(
-                mlines.Line2D([], [], color=FAMILY_COLORS[fam],
-                              marker="o", linestyle="None", markersize=8,
-                              label=fam)
+                mlines.Line2D(
+                    [],
+                    [],
+                    color=FAMILY_COLORS[fam],
+                    marker="o",
+                    linestyle="None",
+                    markersize=8,
+                    label=fam,
+                )
             )
-    ax.legend(handles=handles, loc="upper right", fontsize=9,
-              title="Model Family", title_fontsize=10)
+    ax.legend(
+        handles=handles,
+        loc="upper right",
+        fontsize=9,
+        title="Model Family",
+        title_fontsize=10,
+    )
 
     plt.tight_layout()
     fname = f"bubble_{task}_{precision}_bs{batch_size or 'max'}"
@@ -156,8 +191,12 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
     print(f"  ✓ {fname}")
 
 
-def speedup_chart(df: pd.DataFrame, output_dir: Path,
-                  task: str = "classification", batch_size: int = 32):
+def speedup_chart(
+    df: pd.DataFrame,
+    output_dir: Path,
+    task: str = "classification",
+    batch_size: int = 32,
+):
     """Bar chart: throughput across precision modes for each model."""
     mask = (
         (df["task"] == task)
@@ -170,8 +209,10 @@ def speedup_chart(df: pd.DataFrame, output_dir: Path,
 
     # Pivot: model × precision → throughput
     pivot = sub.pivot_table(
-        index="display_name", columns="precision",
-        values="throughput_mean", aggfunc="first",
+        index="display_name",
+        columns="precision",
+        values="throughput_mean",
+        aggfunc="first",
     )
     # Sort by fp32 throughput
     if "fp32" in pivot.columns:
@@ -183,7 +224,8 @@ def speedup_chart(df: pd.DataFrame, output_dir: Path,
     ax.set_ylabel("")
     ax.set_title(
         f"Precision Speedup — {task.title()} | batch={batch_size}",
-        fontsize=14, fontweight="bold",
+        fontsize=14,
+        fontweight="bold",
     )
     ax.legend(title="Precision", fontsize=9)
     plt.tight_layout()
@@ -194,25 +236,27 @@ def speedup_chart(df: pd.DataFrame, output_dir: Path,
     print(f"  ✓ {fname}")
 
 
-def compile_chart(df: pd.DataFrame, output_dir: Path,
-                  task: str = "classification", batch_size: int = 32,
-                  precision: str = "amp"):
+def compile_chart(
+    df: pd.DataFrame,
+    output_dir: Path,
+    task: str = "classification",
+    batch_size: int = 32,
+    precision: str = "amp",
+):
     """Bar chart: compiled vs not compiled for each model."""
-    mask = (
-        (df["task"] == task)
-        & (df["batch_size"] == batch_size)
-        & (df["precision"] == precision)
-    )
+    mask = (df["task"] == task) & (df["batch_size"] == batch_size) & (df["precision"] == precision)
     sub = df[mask].copy()
     if sub.empty:
         return
 
-    sub["compiled_label"] = sub["compiled"].astype(str).str.lower().map(
-        {"true": "compiled", "false": "eager"}
+    sub["compiled_label"] = (
+        sub["compiled"].astype(str).str.lower().map({"true": "compiled", "false": "eager"})
     )
     pivot = sub.pivot_table(
-        index="display_name", columns="compiled_label",
-        values="throughput_mean", aggfunc="first",
+        index="display_name",
+        columns="compiled_label",
+        values="throughput_mean",
+        aggfunc="first",
     )
     if "eager" in pivot.columns:
         pivot = pivot.sort_values("eager", ascending=True)
@@ -222,9 +266,9 @@ def compile_chart(df: pd.DataFrame, output_dir: Path,
     ax.set_xlabel("Throughput (images/sec)", fontsize=12)
     ax.set_ylabel("")
     ax.set_title(
-        f"torch.compile Effect — {task.title()} | {precision.upper()} | "
-        f"batch={batch_size}",
-        fontsize=14, fontweight="bold",
+        f"torch.compile Effect — {task.title()} | {precision.upper()} | batch={batch_size}",
+        fontsize=14,
+        fontweight="bold",
     )
     ax.legend(title="Mode", fontsize=9)
     plt.tight_layout()
@@ -235,8 +279,12 @@ def compile_chart(df: pd.DataFrame, output_dir: Path,
     print(f"  ✓ {fname}")
 
 
-def batch_scaling_chart(df: pd.DataFrame, output_dir: Path,
-                        task: str = "classification", precision: str = "amp"):
+def batch_scaling_chart(
+    df: pd.DataFrame,
+    output_dir: Path,
+    task: str = "classification",
+    precision: str = "amp",
+):
     """Line chart: throughput vs batch size for each model."""
     mask = (
         (df["task"] == task)
@@ -255,15 +303,23 @@ def batch_scaling_chart(df: pd.DataFrame, output_dir: Path,
     for name in sub["display_name"].unique():
         m = sub[sub["display_name"] == name].sort_values("batch_size")
         color = FAMILY_COLORS.get(m.iloc[0]["model_family"], "#999999")
-        ax.plot(m["batch_size"], m["throughput_mean"], marker="o",
-                label=name, color=color, linewidth=1.5, markersize=5)
+        ax.plot(
+            m["batch_size"],
+            m["throughput_mean"],
+            marker="o",
+            label=name,
+            color=color,
+            linewidth=1.5,
+            markersize=5,
+        )
 
     ax.set_xlabel("Batch Size", fontsize=12)
     ax.set_ylabel("Throughput (images/sec)", fontsize=12)
     ax.set_yscale("log")
     ax.set_title(
         f"Batch Size Scaling — {task.title()} | {precision.upper()}",
-        fontsize=14, fontweight="bold",
+        fontsize=14,
+        fontweight="bold",
     )
     ax.legend(fontsize=7, ncol=3, loc="upper left")
     plt.tight_layout()
@@ -274,8 +330,9 @@ def batch_scaling_chart(df: pd.DataFrame, output_dir: Path,
     print(f"  ✓ {fname}")
 
 
-def cnn_vs_vit_summary(df: pd.DataFrame, output_dir: Path,
-                       batch_size: int = 32, precision: str = "amp"):
+def cnn_vs_vit_summary(
+    df: pd.DataFrame, output_dir: Path, batch_size: int = 32, precision: str = "amp"
+):
     """Side-by-side comparison of CNN vs ViT throughput."""
     mask = (
         (df["batch_size"] == batch_size)
@@ -302,9 +359,9 @@ def cnn_vs_vit_summary(df: pd.DataFrame, output_dir: Path,
         ax.set_title(f"{task.title()}", fontsize=13, fontweight="bold")
 
     fig.suptitle(
-        f"CNN vs Transformer Throughput — {precision.upper()} | "
-        f"batch={batch_size}",
-        fontsize=15, fontweight="bold",
+        f"CNN vs Transformer Throughput — {precision.upper()} | batch={batch_size}",
+        fontsize=15,
+        fontweight="bold",
     )
     plt.tight_layout()
 
@@ -342,8 +399,14 @@ def main():
     for task in ["classification", "segmentation"]:
         for prec in ["fp32", "amp"]:
             for compiled in [False, True]:
-                bubble_chart(df, output_dir, task=task, precision=prec,
-                             batch_size=chart_bs, compiled=compiled)
+                bubble_chart(
+                    df,
+                    output_dir,
+                    task=task,
+                    precision=prec,
+                    batch_size=chart_bs,
+                    compiled=compiled,
+                )
 
     print("\n📊 Generating speedup charts...")
     for task in ["classification", "segmentation"]:

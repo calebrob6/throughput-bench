@@ -15,6 +15,7 @@ import time
 import timm
 import torch
 from tqdm import tqdm
+
 from data import create_dataloader
 
 
@@ -25,8 +26,11 @@ def main():
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--runtime-seconds", type=float, default=60.0)
     parser.add_argument("--warmup-steps", type=int, default=10)
-    parser.add_argument("--no-dataloader", action="store_true",
-                        help="Use pre-allocated GPU batch instead of DataLoader")
+    parser.add_argument(
+        "--no-dataloader",
+        action="store_true",
+        help="Use pre-allocated GPU batch instead of DataLoader",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -38,7 +42,7 @@ def main():
     model.eval().to(device)
 
     if args.no_dataloader:
-        print(f"Using pre-allocated GPU batch (no DataLoader)")
+        print("Using pre-allocated GPU batch (no DataLoader)")
         images_gpu = torch.ones(args.batch_size, 3, 224, 224, device=device)
     else:
         dataloader = create_dataloader(
@@ -64,8 +68,12 @@ def main():
     # Timed run
     total_images = 0
     start_time = time.perf_counter()
-    pbar = tqdm(total=int(args.runtime_seconds), unit="s", desc="Benchmarking",
-                bar_format="{desc}: {elapsed} | {postfix}")
+    pbar = tqdm(
+        total=int(args.runtime_seconds),
+        unit="s",
+        desc="Benchmarking",
+        bar_format="{desc}: {elapsed} | {postfix}",
+    )
     last_update = start_time
     with torch.inference_mode():
         if not args.no_dataloader:
@@ -91,17 +99,14 @@ def main():
             if now - last_update >= 0.5:
                 elapsed_so_far = now - start_time
                 pbar.set_postfix_str(
-                    f"{total_images / elapsed_so_far:.0f} img/s | "
-                    f"{total_images:,} images"
+                    f"{total_images / elapsed_so_far:.0f} img/s | {total_images:,} images"
                 )
                 last_update = now
 
     torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - start_time
     images_per_second = total_images / elapsed
-    pbar.set_postfix_str(
-        f"{images_per_second:.0f} img/s | {total_images:,} images (final)"
-    )
+    pbar.set_postfix_str(f"{images_per_second:.0f} img/s | {total_images:,} images (final)")
     pbar.close()
 
     mode = "pre-allocated" if args.no_dataloader else "dataloader"

@@ -7,7 +7,7 @@
 GPU_ID ?= 0
 PYTHON ?= python
 
-.PHONY: setup benchmark benchmark-quick visualize clean help
+.PHONY: setup benchmark benchmark-quick visualize lint format clean help
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -36,7 +36,12 @@ benchmark-quick:  ## Quick benchmark (4 models, 10s/config)
 visualize:  ## Generate charts from results/ CSVs
 	$(PYTHON) visualize.py
 
-clean:  ## Remove generated results and figures
-	rm -f results/*.csv results/*_hardware.json
+lint:  ## Run ruff linter
+	ruff check .
+
+format:  ## Format code with ruff
+	ruff format .
+
+clean:  ## Remove generated figures
 	rm -f figures/*.png figures/*.svg
-	@echo "✅ Cleaned results and figures"
+	@echo "✅ Cleaned figures"

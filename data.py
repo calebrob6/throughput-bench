@@ -5,7 +5,7 @@ benchmark.py when running with the DataLoader path.
 """
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 
 class RandomPatchDataset(Dataset):
