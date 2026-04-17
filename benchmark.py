@@ -774,9 +774,9 @@ def parse_args():
     p.add_argument(
         "--compile-modes",
         nargs="+",
-        default=["none", "default"],
+        default=["none"],
         choices=["none", "default", "max-autotune"],
-        help="torch.compile modes",
+        help="torch.compile modes (default: none; use 'default' to include compiled runs)",
     )
     p.add_argument(
         "--batch-sizes",
