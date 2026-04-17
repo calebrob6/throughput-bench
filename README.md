@@ -19,36 +19,33 @@ This benchmark provides the data to make informed architecture choices by measur
 - **Classification and segmentation** (SMP U-Net) tasks
 - **Precision modes**: fp32, fp16, AMP
 - **torch.compile** effects
-- **GPU and CPU** performance at varying thread counts
-- **Batch size scaling** behavior
+- **Auto batch size**: largest power-of-2 that fits in GPU memory
 
 Plus a fun [**3D Globe Race**](webapp/index.html) visualization where two models race to map the Earth.
 
+## Quick Start
+
+```bash
+# Clone and set up
+git clone https://github.com/calebrob6/geospeedy.git
+cd geospeedy
+make setup       # conda env, or: pip install -r requirements.txt
+
+# Run the benchmark (uses GPU 0 by default)
+make benchmark
+
+# Generate charts
+make visualize
+```
+
 ## Key Findings
 
-*Results from 8× Tesla V100-SXM2-32GB, PyTorch 2.7.1, timm 1.0.25, 1,200 benchmark configurations*
+*TODO: Results will be populated after running benchmarks on clean hardware.*
 
-- **CNNs dominate throughput**: MobileNetV3-S achieves **21,732 img/s** — **61× faster** than ViT-L/16 (354 img/s) for classification
-- **At Sentinel-2 10m GSD**, MobileNetV3-S covers **109,000 km²/s** vs ViT-L at **1,777 km²/s** — that's the entire contiguous US in ~70 seconds vs ~75 minutes
-- **AMP provides 1.3-3.8× speedup** across architectures on V100, with transformers benefiting most (DeiT3-B: 3.78×, ViT-S: 3.53×)
-- **torch.compile** gives modest gains (1.1-1.5×) on V100; expected to be larger on A100/H100
-- **Swin Transformers** are the fastest hierarchical ViT variant but still 3-6× slower than lightweight CNNs
-- **Zero OOMs** across all 29 models, 4 batch sizes, 3 precisions, and 2 compile modes on V100-32GB
-- **For segmentation** (SMP U-Net), MobileNetV3-S (3,461 img/s) is **11× faster** than Swin-L (307 img/s)
-
-## Results
-
-The full benchmark results are in [`results/benchmark_results.csv`](results/benchmark_results.csv).
-
-### Throughput vs Compute Cost
-
-Each bubble is a model. Size = parameter count. Color = model family. Lines connect models within the same family.
-
-![Throughput Bubble Chart](figures/bubble_classification_amp_bs32.png)
-
-### CNN vs Transformer Comparison
-
+<!-- Uncomment when results are available:
+![Throughput Bubble Chart](figures/bubble_classification_amp_bsmax.png)
 ![CNN vs ViT](figures/cnn_vs_vit_amp_bs32.png)
+-->
 
 ## Pixels/sec → Square Kilometers
 
@@ -68,10 +65,10 @@ coverage_rate  = throughput × area_per_patch  km²/s
 | Landsat (30m) | 30 m | 45.16 km² | 45,158 km²/s | 225,792 km²/s |
 
 **Assumptions:**
-- Pure compute throughput — no disk I/O, network transfer, or pre/post-processing
+- End-to-end throughput (includes DataLoader + CPU→GPU transfer + model forward pass)
 - No overlap between patches (in practice, sliding windows may overlap 50%+)
 - Single GPU / single machine
-- Batch inference (not one-at-a-time)
+- Batch inference at the largest power-of-2 batch size that fits
 - 3-channel RGB input at 224×224 pixels
 
 ## Models Benchmarked
@@ -99,37 +96,64 @@ Open [`webapp/index.html`](webapp/index.html) in a browser for a 3D globe visual
 
 ## Benchmarking Methodology
 
-- **GPU isolation**: One benchmark per GPU; GPU verified empty before each run
+- **GPU isolation**: Benchmark aborts if other processes are detected on the GPU (override with `--force`)
+- **Auto batch size**: Finds the largest power-of-2 batch size that fits, validated with 3 forward passes per candidate to account for cudnn autotuner memory
 - **Warmup**: 20 iterations discarded before timing (handles torch.compile JIT)
-- **Timing**: `torch.cuda.Event` with `enable_timing=True` for precise GPU kernel timing
-- **Duration**: Each config runs for at least 10 seconds to get stable statistics
-- **Throughput**: Computed as `total_images / total_time` (aggregate, not mean of per-iteration rates)
+- **Timing**: Wall-clock (`time.perf_counter`) with `torch.cuda.synchronize()` at boundaries — measures end-to-end throughput including data transfer
+- **Duration**: Each config runs for at least 30 seconds
+- **Throughput**: `total_images / wall_clock_time`
 - **Memory**: Peak GPU memory reset after warmup; reports steady-state inference memory
-- **Cleanup**: `torch.cuda.empty_cache()` + `gc.collect()` + 2s sleep between models
-- **Data**: Random 3×224×224 tensors via DataLoader (no disk I/O bottleneck)
+- **Cleanup**: `torch.cuda.empty_cache()` + `gc.collect()` + sleep between models
+- **Data**: Random 3×224×224 tensors via DataLoader (`num_workers=4`, `prefetch_factor=2`, `pin_memory=True`)
 - **Segmentation**: SMP U-Net with timm encoders, 10 output classes, no pretrained weights
 
 ## Reproducing
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Full benchmark on GPU 0 (auto batch size, all models, ~2 hours)
+make benchmark
 
-# Run GPU benchmark on GPU 0
-python benchmark.py --gpu-id 0
+# Use a specific GPU
+make benchmark GPU_ID=2
 
-# Run specific models only
+# Quick test (4 models, 10s per config)
+make benchmark-quick
+
+# Custom run
 python benchmark.py --gpu-id 0 --models resnet50 vit_base_patch16_224
 
-# Run CPU benchmark with varying thread counts
-python benchmark.py --device cpu --tasks classification --num-threads 1 4 8
+# Manual batch size sweep
+python benchmark.py --gpu-id 0 --batch-sizes 1 8 32 64
 
-# Generate visualization charts
-python visualize.py
-
-# Quick test (one model, fast settings)
-python benchmark.py --gpu-id 0 --models resnet18 --batch-sizes 32 --warmup 5 --timed-seconds 3
+# Generate charts from all CSVs in results/
+make visualize
 ```
+
+## Contributing Results
+
+We welcome benchmark results from different hardware! Running on an A100, H100, or other GPU? Here's how to contribute:
+
+```bash
+# 1. Run the benchmark
+make benchmark
+
+# 2. This generates:
+#    results/{gpu_slug}.csv              — benchmark results
+#    results/{gpu_slug}_hardware.json    — hardware metadata
+
+# 3. Open a PR
+git checkout -b results/my-gpu-name
+git add results/
+git commit -m "Add benchmark results for <your GPU>"
+git push origin results/my-gpu-name
+```
+
+The GPU slug is auto-detected (e.g., `tesla_v100_sxm2_32gb`, `nvidia_a100_sxm4_80gb`).
+
+**PR checklist:**
+- [ ] GPU was idle during benchmarking (the script enforces this)
+- [ ] Used default settings (`make benchmark`)
+- [ ] Hardware JSON shows correct GPU info
 
 ## Adding Custom Models
 
@@ -147,20 +171,6 @@ ModelConfig(
 ```
 
 For geo-FM backbones: if your model is available through timm (or a timm-compatible registry), it can be added directly. Otherwise, extend `create_model_for_task()` in `benchmark.py`.
-
-## Hardware Tested
-
-| Component | Specification |
-|-----------|--------------|
-| GPU | 8× NVIDIA Tesla V100-SXM2-32GB |
-| CPU | 40 cores |
-| RAM | 661 GB |
-| PyTorch | 2.7.1+cu126 |
-| CUDA | 12.6 |
-| timm | 1.0.25 |
-| SMP | 0.5.0 |
-
-**V100 limitations**: No bf16 support; torch.compile benefits are modest compared to A100/H100 (which have better Tensor Core utilization for compiled graphs). Results on newer hardware would show different patterns.
 
 ## Citation
 
