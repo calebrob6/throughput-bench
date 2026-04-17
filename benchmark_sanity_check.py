@@ -48,7 +48,7 @@ def main():
         data_iter = iter(dataloader)
         for _ in range(args.warmup_steps):
             images, _ = next(data_iter)
-            images = images.to(device)
+            images = images.to(device, non_blocking=True)
             _ = model(images)
         torch.cuda.synchronize(device)
 
@@ -71,7 +71,7 @@ def main():
                 data_iter = iter(dataloader)
                 images, _ = next(data_iter)
 
-            images = images.to(device)
+            images = images.to(device, non_blocking=True)
             _ = model(images)
             total_images += images.shape[0]
 
