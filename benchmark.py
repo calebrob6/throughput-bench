@@ -161,6 +161,7 @@ def gpu_cleanup():
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
+    torch._dynamo.reset()
 
 
 # ---------------------------------------------------------------------------
