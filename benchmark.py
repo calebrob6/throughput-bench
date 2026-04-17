@@ -268,7 +268,7 @@ def benchmark_gpu(
     num_warmup: int = 20,
     min_timed_seconds: float = 30.0,
 ) -> dict:
-    """Benchmark on GPU using cuda Events for precise timing."""
+    """Benchmark on GPU using wall-clock timing."""
     use_amp = precision == "amp"
     use_fp16_input = precision == "fp16"
 
@@ -296,11 +296,13 @@ def benchmark_gpu(
 
     # --- timed iterations ---
     batch_size = dataloader.batch_size
-    timings_ms: list[float] = []
-    total_elapsed = 0.0
+    total_images = 0
     data_iter = iter(dataloader)
 
-    while total_elapsed < min_timed_seconds:
+    torch.cuda.synchronize()
+    t_start = time.perf_counter()
+
+    while True:
         try:
             images, _ = next(data_iter)
         except StopIteration:
@@ -311,40 +313,34 @@ def benchmark_gpu(
         if use_fp16_input:
             images = images.half()
 
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
-
-        start_event.record()
         with torch.no_grad():
             if use_amp:
                 with torch.amp.autocast("cuda"):
                     _ = model(images)
             else:
                 _ = model(images)
-        end_event.record()
-        torch.cuda.synchronize()
 
-        elapsed_ms = start_event.elapsed_time(end_event)
-        timings_ms.append(elapsed_ms)
-        total_elapsed += elapsed_ms / 1000.0
+        total_images += batch_size
 
-    timings = np.array(timings_ms)
-    total_images = batch_size * len(timings)
-    total_time_s = timings.sum() / 1000.0
-    aggregate_throughput = total_images / total_time_s
-    per_iter_rates = batch_size / (timings / 1000.0)
+        if time.perf_counter() - t_start >= min_timed_seconds:
+            break
+
+    torch.cuda.synchronize()
+    elapsed_s = time.perf_counter() - t_start
+
+    throughput = total_images / elapsed_s
     peak_mem = torch.cuda.max_memory_allocated() / 1e6
 
     return {
-        "throughput_mean": float(aggregate_throughput),
-        "throughput_std": float(np.std(per_iter_rates)),
-        "throughput_median": float(np.median(per_iter_rates)),
-        "throughput_min": float(np.min(per_iter_rates)),
-        "throughput_max": float(np.max(per_iter_rates)),
-        "latency_mean_ms": float(np.mean(timings)),
-        "latency_std_ms": float(np.std(timings)),
+        "throughput_mean": float(throughput),
+        "throughput_std": 0.0,
+        "throughput_median": float(throughput),
+        "throughput_min": float(throughput),
+        "throughput_max": float(throughput),
+        "latency_mean_ms": float(elapsed_s / (total_images / batch_size) * 1000),
+        "latency_std_ms": 0.0,
         "peak_memory_mb": float(peak_mem),
-        "num_iterations": len(timings),
+        "num_iterations": total_images // batch_size,
     }
 
 
