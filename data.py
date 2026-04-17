@@ -33,7 +33,7 @@ class RandomPatchDataset(Dataset):
         return self.length
 
     def __getitem__(self, idx: int):
-        image = torch.randn(self.channels, self.size, self.size)
+        image = torch.ones(self.channels, self.size, self.size)
         if self.task == "classification":
             label = torch.randint(0, self.num_classes, (1,)).item()
             return image, label
