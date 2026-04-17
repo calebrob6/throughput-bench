@@ -40,7 +40,7 @@ def main():
 
     if args.no_dataloader:
         print(f"Using pre-allocated GPU batch (no DataLoader)")
-        images_gpu = torch.randn(args.batch_size, 3, 224, 224, device=device)
+        images_gpu = torch.ones(args.batch_size, 3, 224, 224, device=device)
     else:
         dataloader = create_dataloader(
             task="classification",
@@ -77,7 +77,7 @@ def main():
                 break
 
             if args.no_dataloader:
-                images_gpu = torch.randn(args.batch_size, 3, 224, 224, device=device)
+                images_gpu = torch.ones(args.batch_size, 3, 224, 224, device=device)
                 _ = model(images_gpu)
             else:
                 try:
