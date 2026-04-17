@@ -40,7 +40,7 @@ import timm
 import segmentation_models_pytorch as smp
 
 from data import create_dataloader
-from models import MODEL_REGISTRY, ModelConfig, get_models
+from models import ModelConfig, get_models
 
 # ---------------------------------------------------------------------------
 # Result schema
@@ -196,8 +196,7 @@ def create_model_for_task(
     return model
 
 
-def apply_precision(model: nn.Module, precision: str,
-                    device: torch.device) -> nn.Module:
+def apply_precision(model: nn.Module, precision: str) -> nn.Module:
     if precision == "fp16":
         model = model.half()
     return model
@@ -413,7 +412,7 @@ def run_single_benchmark(
         model = create_model_for_task(mc, task, device)
         if model is None:
             return None
-        model = apply_precision(model, precision, device)
+        model = apply_precision(model, precision)
         model, compile_ok = apply_compile(model, compile_mode)
         actual_compile_mode = compile_mode if compile_ok else "none"
         actual_compiled = compile_ok and compile_mode != "none"

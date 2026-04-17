@@ -1,27 +1,12 @@
-# 🌍 ThroughputBencher
+# ThroughputBencher
 
-**How fast can your model map the Earth?**
+A simple deep learning model throughput benchmarking tool with geospatial machine learning applications in mind.
 
-A rigorous inference throughput benchmark for geospatial ML model backbones — comparing CNNs, Vision Transformers, and hybrids on patch classification and segmentation tasks.
+When choosing a model backbone for large-scale inference — mapping a country from satellite imagery, processing daily sensor feeds, running disaster response pipelines — throughput (images/sec) is often as important as accuracy. Yet most papers and benchmarks focus on accuracy alone, and practitioners are left guessing how fast a model will actually run on their hardware.
 
-> Most geospatial foundation models use ViT-L backbones. But how much throughput are we leaving on the table? ThroughputBencher measures it.
+ThroughputBencher measures end-to-end inference throughput for **29 model architectures** across CNNs, Vision Transformers, and hybrids, on both classification and segmentation tasks. It tests precision modes (fp32, fp16, AMP), `torch.compile`, and automatically finds the optimal batch size for your GPU. Results are saved as a CSV for easy analysis, and a [3D globe visualization](webapp/index.html) lets you see what these throughput numbers mean in terms of real-world coverage.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
----
-
-## Motivation
-
-The geospatial ML community has converged on Vision Transformer (ViT) architectures — especially ViT-L — as the default backbone for foundation models (Prithvi, SatMAE, Clay, Scale-MAE, etc.). While ViTs excel at representation learning, their inference throughput is significantly lower than CNNs of comparable accuracy. For operational deployment — mapping entire countries, running disaster response pipelines, or processing daily satellite feeds — **throughput matters**.
-
-This benchmark provides the data to make informed architecture choices by measuring:
-- **~30 model architectures** across CNN, ViT, and hybrid families
-- **Classification and segmentation** (SMP U-Net) tasks
-- **Precision modes**: fp32, fp16, AMP
-- **torch.compile** effects
-- **Auto batch size**: largest power-of-2 that fits in GPU memory
-
-Plus a fun [**3D Globe Race**](webapp/index.html) visualization where two models race to map the Earth.
 
 ## Quick Start
 

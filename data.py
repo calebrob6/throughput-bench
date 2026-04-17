@@ -1,7 +1,7 @@
-"""Random patch dataset and dataloader for benchmarking.
+"""Synthetic dataset and DataLoader for throughput benchmarking.
 
-Generates synthetic 3-channel 224×224 patches with dummy labels so that
-benchmarks measure pure compute throughput without disk I/O.
+Generates constant 3×224×224 patches with dummy labels. Used by
+benchmark.py when running with the DataLoader path.
 """
 
 import torch

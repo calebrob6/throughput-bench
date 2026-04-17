@@ -2,9 +2,10 @@
 """Generate publication-quality charts from ThroughputBencher benchmark results.
 
 Usage:
-    python visualize.py                           # uses results/benchmark_results.csv
-    python visualize.py --input results/my.csv    # custom CSV
-    python visualize.py --output figures/          # custom output dir
+    python visualize.py                        # loads all CSVs from results/
+    python visualize.py --input results/       # same, explicit
+    python visualize.py --input my_results.csv # single file
+    python visualize.py --output figures/      # custom output dir
 """
 
 import argparse
@@ -14,7 +15,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
-import numpy as np
 import pandas as pd
 import seaborn as sns
 

@@ -90,11 +90,3 @@ def get_models(names: list[str] | None = None) -> list[ModelConfig]:
         return list(MODEL_REGISTRY)
     name_set = set(names)
     return [m for m in MODEL_REGISTRY if m.timm_name in name_set]
-
-
-def get_families() -> dict[str, list[ModelConfig]]:
-    """Group models by family."""
-    families: dict[str, list[ModelConfig]] = {}
-    for m in MODEL_REGISTRY:
-        families.setdefault(m.family, []).append(m)
-    return families

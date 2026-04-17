@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Simple timm ResNet-18 throughput benchmark.
+"""Sanity check: minimal ResNet-18 throughput benchmark.
 
-Runs forward passes on synthetic 3x224x224 inputs using a random dataset and
-reports images/sec over ~60 seconds of timed runtime.
+A standalone reference implementation for verifying that benchmark.py
+produces consistent results. Shows live throughput via tqdm.
 
 Example:
-    python benchmark_resnet18.py --device cuda:0
-    python benchmark_resnet18.py --device cuda:1 --batch-size 512 --num-workers 8
+    python benchmark_sanity_check.py --device cuda:0
+    python benchmark_sanity_check.py --device cuda:1 --batch-size 512 --no-dataloader
 """
 
 import argparse
@@ -15,7 +15,6 @@ import time
 import timm
 import torch
 from tqdm import tqdm
-from torch.utils.data import Dataset, DataLoader
 from data import create_dataloader
 
 
@@ -77,7 +76,6 @@ def main():
                 break
 
             if args.no_dataloader:
-                images_gpu = torch.ones(args.batch_size, 3, 224, 224, device=device)
                 _ = model(images_gpu)
             else:
                 try:
