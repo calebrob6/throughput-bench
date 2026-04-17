@@ -499,6 +499,16 @@ def run_single_benchmark(
         }
     except torch.cuda.OutOfMemoryError:
         return "OOM"
+    except RuntimeError as e:
+        # torch.compile is lazy — Triton/inductor errors surface on first
+        # forward pass, not at compile() time.  Catch them so the rest of
+        # the benchmark can continue.
+        from torch._dynamo.exc import BackendCompilerFailed
+
+        if isinstance(e, BackendCompilerFailed):
+            print(f"\n    ⚠ torch.compile failed at runtime (skipping): {e}")
+            return "COMPILE_ERROR"
+        raise
     finally:
         # Explicitly shut down DataLoader workers to free file descriptors
         if dl is not None and hasattr(dl, "_iterator") and dl._iterator is not None:
@@ -651,6 +661,10 @@ def run_benchmark(args):
                             macs_g,
                             params_m,
                         )
+                        if result == "COMPILE_ERROR":
+                            print("SKIP (compile error)")
+                            continue
+
                         if result == "OOM":
                             # Step down batch size for compiled mode
                             if cm != "none" and bs > 1:
