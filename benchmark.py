@@ -500,6 +500,9 @@ def run_single_benchmark(
     except torch.cuda.OutOfMemoryError:
         return "OOM"
     finally:
+        # Explicitly shut down DataLoader workers to free file descriptors
+        if dl is not None and hasattr(dl, "_iterator") and dl._iterator is not None:
+            dl._iterator._shutdown_workers()
         del model, dl
         gpu_cleanup()
 

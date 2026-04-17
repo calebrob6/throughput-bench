@@ -60,7 +60,6 @@ def create_dataloader(
         **kwargs,
     )
     if num_workers > 0:
-        loader_kwargs["persistent_workers"] = True
         if prefetch_factor is not None:
             loader_kwargs["prefetch_factor"] = prefetch_factor
     return DataLoader(dataset, **loader_kwargs)
