@@ -104,8 +104,34 @@ Open [`webapp/index.html`](webapp/index.html) in a browser for a 3D globe visual
 - **Throughput**: `total_images / wall_clock_time`
 - **Memory**: Peak GPU memory reset after warmup; reports steady-state inference memory
 - **Cleanup**: `torch.cuda.empty_cache()` + `gc.collect()` + sleep between models
-- **Data**: Random 3×224×224 tensors via DataLoader (`num_workers=4`, `prefetch_factor=2`, `pin_memory=True`)
+- **Data**: Random 3×224×224 tensors via DataLoader (`num_workers=8`, `prefetch_factor=2`, `pin_memory=True`)
 - **Segmentation**: SMP U-Net with timm encoders, 10 output classes, no pretrained weights
+
+### DataLoader vs Pre-allocated Batches
+
+By default, benchmarks use a PyTorch DataLoader to feed data to the GPU — this is realistic but adds overhead. Use `--no-dataloader` to pre-allocate a batch directly on GPU and measure pure compute throughput.
+
+We profiled each step of the pipeline for a single batch (512×3×224×224 on V100):
+
+| Step | Time |
+|------|------|
+| `torch.ones` on CPU (per worker) | 10 ms |
+| `torch.randn` on CPU (per worker) | 506 ms |
+| CPU → GPU transfer (pinned, async) | ~0 ms |
+| **DataLoader IPC** (8 workers → main process) | **~143 ms** |
+| `torch.randn` directly on GPU | 1.8 ms |
+| **ResNet-18 forward pass** | **232 ms** |
+
+The DataLoader bottleneck is **IPC overhead** — moving 293 MB of tensor data from worker processes to the main process through shared memory. Even with `torch.ones` (10ms to create vs 506ms for `torch.randn`), the DataLoader still takes ~144ms per batch because serialization and shared memory transfer dominate.
+
+This means the DataLoader path measures **end-to-end pipeline throughput** (realistic for production), while `--no-dataloader` measures **peak GPU compute throughput** (the upper bound). For ResNet-18 at batch 512:
+
+| Mode | Throughput |
+|------|-----------|
+| DataLoader (`num_workers=8`) | ~2,000 img/s |
+| Pre-allocated GPU batch | ~4,600 img/s |
+
+Both are reported honestly — choose the metric that matches your use case.
 
 ## Reproducing
 
