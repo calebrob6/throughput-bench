@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GeoSpeedy — rigorous throughput benchmarking for geospatial model backbones.
+"""ThroughputBencher — rigorous throughput benchmarking for geospatial model backbones.
 
 Measures inference throughput (images/sec) for classification and segmentation
 across many model architectures, precision modes, and hardware configurations.
@@ -653,7 +653,7 @@ def run_benchmark(args):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="GeoSpeedy: Geospatial model throughput benchmark",
+        description="ThroughputBencher: Geospatial model throughput benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--gpu-id", type=int, default=0,

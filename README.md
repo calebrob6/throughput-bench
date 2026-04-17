@@ -1,10 +1,10 @@
-# 🌍 GeoSpeedy
+# 🌍 ThroughputBencher
 
 **How fast can your model map the Earth?**
 
 A rigorous inference throughput benchmark for geospatial ML model backbones — comparing CNNs, Vision Transformers, and hybrids on patch classification and segmentation tasks.
 
-> Most geospatial foundation models use ViT-L backbones. But how much throughput are we leaving on the table? GeoSpeedy measures it.
+> Most geospatial foundation models use ViT-L backbones. But how much throughput are we leaving on the table? ThroughputBencher measures it.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -27,8 +27,8 @@ Plus a fun [**3D Globe Race**](webapp/index.html) visualization where two models
 
 ```bash
 # Clone and set up
-git clone https://github.com/calebrob6/geospeedy.git
-cd geospeedy
+git clone https://github.com/calebrob6/throughput-bencher.git
+cd throughput-bencher
 make setup       # conda env, or: pip install -r requirements.txt
 
 # Run the benchmark (uses GPU 0 by default)
@@ -155,6 +155,20 @@ python benchmark.py --gpu-id 0 --batch-sizes 1 8 32 64
 make visualize
 ```
 
+## Sanity Check Script
+
+`benchmark_sanity_check.py` is a minimal standalone benchmark for ResNet-18 that serves as a reference implementation. Use it to verify that `benchmark.py` produces consistent results on your hardware.
+
+```bash
+# Run with DataLoader (default)
+python benchmark_sanity_check.py --device cuda:0 --runtime-seconds 30
+
+# Run with pre-allocated GPU batch
+python benchmark_sanity_check.py --device cuda:0 --runtime-seconds 30 --no-dataloader
+```
+
+It uses `torch.inference_mode()`, wall-clock timing with `torch.cuda.synchronize()` at boundaries, and shows live throughput via tqdm. The numbers should closely match `benchmark.py` for ResNet-18 at the same batch size and mode. If they diverge significantly, something is off with your environment.
+
 ## Contributing Results
 
 We welcome benchmark results from different hardware! Running on an A100, H100, or other GPU? Here's how to contribute:
@@ -201,11 +215,11 @@ For geo-FM backbones: if your model is available through timm (or a timm-compati
 ## Citation
 
 ```bibtex
-@software{geospeedy2026,
-  title={GeoSpeedy: Geospatial Model Throughput Benchmark},
+@software{throughput-bencher2026,
+  title={ThroughputBencher: Geospatial Model Throughput Benchmark},
   author={Robinson, Caleb},
   year={2026},
-  url={https://github.com/calebrob6/geospeedy},
+  url={https://github.com/calebrob6/throughput-bencher},
   license={MIT}
 }
 ```

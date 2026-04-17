@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate publication-quality charts from GeoSpeedy benchmark results.
+"""Generate publication-quality charts from ThroughputBencher benchmark results.
 
 Usage:
     python visualize.py                           # uses results/benchmark_results.csv
@@ -315,7 +315,7 @@ def cnn_vs_vit_summary(df: pd.DataFrame, output_dir: Path,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="GeoSpeedy visualization")
+    parser = argparse.ArgumentParser(description="ThroughputBencher visualization")
     parser.add_argument("--input", default="results")
     parser.add_argument("--output", default="figures")
     args = parser.parse_args()

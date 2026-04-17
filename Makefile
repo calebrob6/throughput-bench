@@ -1,4 +1,4 @@
-# GeoSpeedy Makefile
+# ThroughputBencher Makefile
 # Usage: make setup && make benchmark && make visualize
 #
 # Override GPU_ID to use a different GPU:
@@ -17,7 +17,7 @@ setup:  ## Create conda environment and install dependencies
 	conda env create -f environment.yml || conda env update -f environment.yml
 	@echo ""
 	@echo "✅ Environment ready. Activate with:"
-	@echo "   conda activate geospeedy"
+	@echo "   conda activate throughput-bencher"
 
 setup-pip:  ## Install dependencies with pip (alternative to conda)
 	pip install -r requirements.txt

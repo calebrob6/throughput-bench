@@ -1,4 +1,4 @@
-name: geospeedy
+name: throughput-bencher
 channels:
   - pytorch
   - nvidia

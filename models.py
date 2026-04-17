@@ -1,4 +1,4 @@
-"""Model registry for GeoSpeedy benchmarks.
+"""Model registry for ThroughputBencher benchmarks.
 
 Each model entry defines the timm model name, display metadata, and whether
 it supports SMP U-Net segmentation (requires hierarchical multi-scale features).
