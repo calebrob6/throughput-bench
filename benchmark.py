@@ -428,7 +428,7 @@ def run_single_benchmark(
 
         if args.device == "cuda":
             dl = create_dataloader(
-                task=task, batch_size=batch_size, num_workers=4,
+                task=task, batch_size=batch_size, num_workers=8,
                 prefetch_factor=2,
                 length=max(batch_size * 500, 10_000),
             )
