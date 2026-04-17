@@ -230,7 +230,7 @@ def find_max_batch_size(
     config: ModelConfig,
     task: str,
     device: torch.device,
-    max_power: int = 9,
+    max_power: int = 13,
     num_validate: int = 3,
 ) -> int:
     """Find largest power-of-2 batch size that fits in GPU memory.
@@ -242,7 +242,7 @@ def find_max_batch_size(
     """
     max_bs = 1
 
-    for power in range(max_power + 1):  # 1, 2, 4, ..., 512
+    for power in range(max_power + 1):  # 1, 2, 4, ..., up to 8192
         bs = 2**power
         gpu_cleanup()
         try:
