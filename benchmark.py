@@ -537,8 +537,14 @@ def run_benchmark(args):
         print(f"🖥  Device: GPU {gpu_id} ({gpu_name}, {gpu_mem_gb:.0f} GB)")
 
         if not check_gpu_free(gpu_id):
-            print(f"⚠  WARNING: Other processes detected on GPU {gpu_id}. "
-                  f"Results may be unreliable.")
+            if args.force:
+                print(f"⚠  WARNING: Other processes detected on GPU {gpu_id}. "
+                      f"Results may be unreliable. (--force used, continuing)")
+            else:
+                print(f"❌ ERROR: Other processes detected on GPU {gpu_id}.")
+                print(f"   Benchmarks require an idle GPU for reliable results.")
+                print(f"   Use --force to override this check.")
+                sys.exit(1)
 
         # Auto-detect output path if user didn't specify
         if args.output == "auto":
@@ -735,6 +741,8 @@ def parse_args():
                     help="Minimum seconds to time (default: 30)")
     p.add_argument("--output", type=str, default="auto",
                     help="Output CSV path (default: auto-detect from GPU)")
+    p.add_argument("--force", action="store_true",
+                    help="Run even if other processes are using the GPU")
     return p.parse_args()
 
 
