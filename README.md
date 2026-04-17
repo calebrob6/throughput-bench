@@ -94,7 +94,7 @@ Open [`webapp/index.html`](webapp/index.html) in a browser for a 3D globe visual
 
 ### DataLoader vs Pre-allocated Batches
 
-By default, benchmarks use a PyTorch DataLoader to feed data to the GPU — this is realistic but adds overhead. Use `--no-dataloader` to pre-allocate a batch directly on GPU and measure pure compute throughput.
+By default, benchmarks pre-allocate a batch directly on GPU and measure pure compute throughput. Pass `--dataloader` to feed data through a PyTorch DataLoader instead — more realistic for production, but adds overhead.
 
 We profiled each step of the pipeline for a single batch (512×3×224×224 on V100):
 
@@ -109,12 +109,12 @@ We profiled each step of the pipeline for a single batch (512×3×224×224 on V1
 
 The DataLoader bottleneck is **IPC overhead** — moving 293 MB of tensor data from worker processes to the main process through shared memory. Even with `torch.ones` (10ms to create vs 506ms for `torch.randn`), the DataLoader still takes ~144ms per batch because serialization and shared memory transfer dominate.
 
-This means the DataLoader path measures **end-to-end pipeline throughput** (realistic for production), while `--no-dataloader` measures **peak GPU compute throughput** (the upper bound). For ResNet-18 at batch 512:
+This means the default (pre-allocated) path measures **peak GPU compute throughput** (the upper bound), while `--dataloader` measures **end-to-end pipeline throughput** (realistic for production). For ResNet-18 at batch 512:
 
 | Mode | Throughput |
 |------|-----------|
-| DataLoader (`num_workers=8`) | ~2,000 img/s |
-| Pre-allocated GPU batch | ~4,600 img/s |
+| Pre-allocated GPU batch (default) | ~4,600 img/s |
+| DataLoader (`--dataloader`, `num_workers=8`) | ~2,000 img/s |
 
 Both are reported honestly — choose the metric that matches your use case.
 
@@ -146,10 +146,10 @@ make visualize
 
 ```bash
 # Run with DataLoader (default)
-python benchmark_sanity_check.py --device cuda:0 --runtime-seconds 30
+python benchmark_sanity_check.py --device 0 --runtime-seconds 30
 
 # Run with pre-allocated GPU batch
-python benchmark_sanity_check.py --device cuda:0 --runtime-seconds 30 --no-dataloader
+python benchmark_sanity_check.py --device 0 --runtime-seconds 30 --no-dataloader
 ```
 
 It uses `torch.inference_mode()`, wall-clock timing with `torch.cuda.synchronize()` at boundaries, and shows live throughput via tqdm. The numbers should closely match `benchmark.py` for ResNet-18 at the same batch size and mode. If they diverge significantly, something is off with your environment.

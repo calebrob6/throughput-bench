@@ -5,8 +5,8 @@ A standalone reference implementation for verifying that benchmark.py
 produces consistent results. Shows live throughput via tqdm.
 
 Example:
-    python benchmark_sanity_check.py --device cuda:0
-    python benchmark_sanity_check.py --device cuda:1 --batch-size 512 --no-dataloader
+    python benchmark_sanity_check.py --device 0
+    python benchmark_sanity_check.py --device 1 --batch-size 512 --no-dataloader
 """
 
 import argparse
@@ -21,7 +21,7 @@ from data import create_dataloader
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--device", type=int, default=0, help="CUDA device index")
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--runtime-seconds", type=float, default=60.0)
@@ -36,7 +36,7 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this benchmark.")
 
-    device = torch.device(args.device)
+    device = torch.device("cuda", args.device)
 
     model = timm.create_model("resnet18", pretrained=False, num_classes=10)
     model.eval().to(device)
@@ -110,7 +110,7 @@ def main():
     pbar.close()
 
     mode = "pre-allocated" if args.no_dataloader else "dataloader"
-    print(f"device: {args.device}")
+    print(f"device: cuda:{args.device}")
     print(f"mode: {mode}")
     print(f"batch_size: {args.batch_size}")
     print(f"runtime_seconds: {elapsed:.2f}")

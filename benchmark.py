@@ -17,8 +17,8 @@ Usage examples:
     # Only classification, AMP precision
     python benchmark.py --gpu-id 0 --tasks classification --precisions amp
 
-    # Pure GPU compute (no DataLoader overhead)
-    python benchmark.py --gpu-id 0 --no-dataloader
+    # Include DataLoader overhead (default is pure GPU compute)
+    python benchmark.py --gpu-id 0 --dataloader
 """
 
 import argparse
@@ -443,7 +443,7 @@ def run_single_benchmark(
             task_params = count_params(model)
 
         torch.cuda.reset_peak_memory_stats()
-        if args.no_dataloader:
+        if not args.dataloader:
             stats = benchmark_gpu_preallocated(
                 model,
                 batch_size,
@@ -809,10 +809,12 @@ def parse_args():
         help="Run even if other processes are using the GPU",
     )
     p.add_argument(
-        "--no-dataloader",
-        action="store_true",
-        help="Use pre-allocated GPU batch instead of DataLoader "
-        "(maximizes GPU utilization, measures pure compute)",
+        "--dataloader",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use a PyTorch DataLoader to feed data (adds realistic pipeline "
+        "overhead). Default is a pre-allocated GPU batch, which measures "
+        "peak compute throughput.",
     )
     return p.parse_args()
 
