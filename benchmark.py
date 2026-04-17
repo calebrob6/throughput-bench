@@ -561,8 +561,27 @@ def run_benchmark(args):
         print(f"📋 Batch sizes: {args.batch_sizes}")
     print(f"📋 Timed seconds: {args.timed_seconds}")
 
-    # Open CSV writer
+    # Load existing results to skip already-completed configs
     file_exists = output_path.exists() and output_path.stat().st_size > 0
+    completed_keys: set[tuple] = set()
+    if file_exists:
+        try:
+            import pandas as pd
+
+            existing = pd.read_csv(output_path)
+            for _, row in existing.iterrows():
+                key = (
+                    row.get("model_name"),
+                    row.get("task"),
+                    row.get("precision"),
+                    row.get("compile_mode"),
+                )
+                completed_keys.add(key)
+            print(f"📂 Found {len(completed_keys)} existing configs, will skip")
+        except Exception:
+            pass
+
+    # Open CSV writer
     csv_file = open(output_path, "a", newline="")
     writer = csv.DictWriter(csv_file, fieldnames=CSV_COLUMNS)
     if not file_exists:
@@ -611,6 +630,12 @@ def run_benchmark(args):
                     for bs in batch_sizes_to_run:
                         completed += 1
                         label = f"  [{completed}] {task} | {prec} | compile={cm} | bs={bs}"
+
+                        config_key = (mc.timm_name, task, prec, cm)
+                        if config_key in completed_keys:
+                            print(label, "... SKIP (already in CSV)")
+                            continue
+
                         print(label, end=" ... ", flush=True)
 
                         result = run_single_benchmark(
