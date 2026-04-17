@@ -82,15 +82,11 @@ CSV_COLUMNS = [
 
 
 def get_gpu_name(gpu_id: int = 0) -> str:
-    if torch.cuda.is_available():
-        return torch.cuda.get_device_name(gpu_id)
-    return "N/A"
+    return torch.cuda.get_device_name(gpu_id)
 
 
 def get_gpu_mem_gb(gpu_id: int = 0) -> float:
-    if torch.cuda.is_available():
-        return torch.cuda.get_device_properties(gpu_id).total_memory / 1e9
-    return 0.0
+    return torch.cuda.get_device_properties(gpu_id).total_memory / 1e9
 
 
 def get_gpu_slug() -> str:
@@ -157,11 +153,10 @@ def check_gpu_free(gpu_id: int) -> bool:
 
 
 def gpu_cleanup():
-    """Aggressively free GPU memory."""
+    """Free GPU memory between benchmark runs."""
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
 
 
 # ---------------------------------------------------------------------------
@@ -175,14 +170,11 @@ def count_params(model: nn.Module) -> float:
 
 def estimate_macs(model: nn.Module, input_shape: tuple = (1, 3, 224, 224),
                   device: str = "cpu") -> float:
-    try:
-        from torch.utils.flop_counter import FlopCounterMode
-        inp = torch.randn(*input_shape, device=device)
-        with FlopCounterMode(display=False) as fcm:
-            model(inp)
-        return fcm.get_total_flops() / 1e9
-    except Exception:
-        return -1.0
+    from torch.utils.flop_counter import FlopCounterMode
+    inp = torch.randn(*input_shape, device=device)
+    with FlopCounterMode(display=False) as fcm:
+        model(inp)
+    return fcm.get_total_flops() / 1e9
 
 
 def create_model_for_task(
@@ -245,29 +237,20 @@ def find_max_batch_size(
     for power in range(max_power + 1):  # 1, 2, 4, ..., 512
         bs = 2 ** power
         gpu_cleanup()
-        model = None
         try:
             model = create_model_for_task(config, task, device)
             if model is None:
                 return 0
             x = torch.randn(bs, 3, 224, 224, device=device)
-            # Run multiple passes to let cudnn autotuner settle
             with torch.no_grad():
                 for _ in range(num_validate):
                     _ = model(x)
             torch.cuda.synchronize()
             max_bs = bs
+            del model, x
+            gpu_cleanup()
         except torch.cuda.OutOfMemoryError:
             break
-        except Exception:
-            break
-        finally:
-            del model
-            try:
-                del x
-            except UnboundLocalError:
-                pass
-            gpu_cleanup()
 
     return max_bs
 
@@ -442,13 +425,10 @@ def run_single_benchmark(
         actual_compile_mode = compile_mode if compile_ok else "none"
         actual_compiled = compile_ok and compile_mode != "none"
 
-        # Compute seg-specific MACs/params
+        # Compute seg-specific params
         task_macs, task_params = macs_g, params_m
         if task == "segmentation":
-            try:
-                task_params = count_params(model)
-            except Exception:
-                pass
+            task_params = count_params(model)
 
         dl_workers = 0 if args.device == "cpu" else args.num_workers
         dl = create_dataloader(
@@ -502,9 +482,6 @@ def run_single_benchmark(
         }
     except torch.cuda.OutOfMemoryError:
         return "OOM"
-    except Exception as e:
-        print(f"ERROR: {e}")
-        return None
     finally:
         del model, dl
         gpu_cleanup()
@@ -678,8 +655,6 @@ def run_benchmark(args):
                                 continue
 
                         if result and isinstance(result, dict):
-                            n = int(float(result.get("latency_mean_ms", 0))
-                                    and 1)
                             tp = float(result["throughput_mean"])
                             print(f"{tp:.1f} img/s")
                             writer.writerow(result)
