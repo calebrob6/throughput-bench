@@ -259,6 +259,15 @@ def find_max_batch_size(
             gpu_cleanup()
         except torch.cuda.OutOfMemoryError:
             break
+        except RuntimeError as e:
+            # cuDNN conv2d uses 32-bit indexing internally, which caps total
+            # tensor elements at 2**31 - 1 (~2.147B). ConvNeXt and other
+            # conv-heavy models trip this well before OOM at very large
+            # batch sizes. Treat it like OOM: back off and return the last
+            # size that worked.
+            if "canUse32BitIndexMath" in str(e) or "32-bit indexing" in str(e):
+                break
+            raise
 
     return max_bs
 
@@ -508,6 +517,12 @@ def run_single_benchmark(
         if isinstance(e, BackendCompilerFailed):
             print(f"\n    ⚠ torch.compile failed at runtime (skipping): {e}")
             return "COMPILE_ERROR"
+        if "canUse32BitIndexMath" in str(e) or "32-bit indexing" in str(e):
+            print(
+                "\n    ⚠ Batch size exceeds cuDNN 32-bit indexing limit "
+                "(~2.147B elements); skipping."
+            )
+            return "OOM"
         raise
     finally:
         # Explicitly shut down DataLoader workers to free file descriptors
