@@ -24,8 +24,32 @@ sns.set_theme(style="whitegrid", font_scale=1.1)
 
 
 def load_results(path: str) -> pd.DataFrame:
-    """Load and clean benchmark CSV."""
-    df = pd.read_csv(path)
+    """Load and clean benchmark CSV(s).
+
+    If ``path`` is a directory, loads all CSVs in it. If a single file,
+    loads that file. Also tries globbing ``results/*.csv`` if path is
+    'results/benchmark_results.csv' and doesn't exist.
+    """
+    p = Path(path)
+    frames = []
+    if p.is_dir():
+        csv_files = sorted(p.glob("*.csv"))
+    elif p.exists():
+        csv_files = [p]
+    else:
+        # Try globbing the directory
+        csv_files = sorted(p.parent.glob("*.csv"))
+
+    for f in csv_files:
+        try:
+            frames.append(pd.read_csv(f))
+        except Exception:
+            continue
+
+    if not frames:
+        raise FileNotFoundError(f"No CSV files found at {path}")
+
+    df = pd.concat(frames, ignore_index=True)
     # Drop OOM rows for plotting
     df = df[df["throughput_mean"] != "OOM"].copy()
     for col in ["throughput_mean", "throughput_std", "throughput_median",
@@ -33,26 +57,40 @@ def load_results(path: str) -> pd.DataFrame:
                  "latency_mean_ms", "batch_size"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Deduplicate: keep the last entry per unique config
+    dedup_keys = ["model_name", "task", "precision", "compile_mode",
+                   "batch_size", "device"]
+    dedup_keys = [k for k in dedup_keys if k in df.columns]
+    if "gpu_name" in df.columns:
+        dedup_keys.append("gpu_name")
+    df = df.drop_duplicates(subset=dedup_keys, keep="last")
     return df
 
 
 def bubble_chart(df: pd.DataFrame, output_dir: Path,
                  task: str = "classification", precision: str = "amp",
-                 batch_size: int = 32, compiled: bool = False):
-    """Hero chart: MACs vs throughput, bubbles sized by params, colored by family."""
+                 batch_size: int | None = None, compiled: bool = False):
+    """Hero chart: MACs vs throughput, bubbles sized by params, colored by family.
+
+    If ``batch_size`` is None, picks the best throughput per model
+    (supports auto-batch-size results).
+    """
     mask = (
         (df["task"] == task)
         & (df["precision"] == precision)
-        & (df["batch_size"] == batch_size)
         & (df["compiled"].astype(str).str.lower() == str(compiled).lower())
         & (df["device"] == "cuda")
     )
+    if batch_size is not None:
+        mask = mask & (df["batch_size"] == batch_size)
     sub = df[mask].copy()
     if sub.empty:
-        print(f"  ⚠ No data for {task}/{precision}/bs{batch_size}/compiled={compiled}")
+        print(f"  ⚠ No data for {task}/{precision}/bs={batch_size}/compiled={compiled}")
         return
 
-    sub = sub.drop_duplicates(subset=["model_name"], keep="last")
+    # Keep best throughput per model (handles auto-batch-size)
+    sub = sub.sort_values("throughput_mean", ascending=False)
+    sub = sub.drop_duplicates(subset=["model_name"], keep="first")
     sub = sub[sub["macs_G"] > 0]
 
     fig, ax = plt.subplots(figsize=(14, 9))
@@ -89,10 +127,11 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
     ax.set_xlabel("MACs (GFLOPs)", fontsize=13)
     ax.set_ylabel("Throughput (images/sec)", fontsize=13)
     compile_label = " + torch.compile" if compiled else ""
+    bs_label = f"batch={batch_size}" if batch_size else "max batch"
     ax.set_title(
         f"Inference Throughput vs Compute Cost — "
         f"{task.title()} | {precision.upper()}{compile_label} | "
-        f"batch={batch_size}",
+        f"{bs_label}",
         fontsize=14, fontweight="bold",
     )
 
@@ -109,7 +148,7 @@ def bubble_chart(df: pd.DataFrame, output_dir: Path,
               title="Model Family", title_fontsize=10)
 
     plt.tight_layout()
-    fname = f"bubble_{task}_{precision}_bs{batch_size}"
+    fname = f"bubble_{task}_{precision}_bs{batch_size or 'max'}"
     if compiled:
         fname += "_compiled"
     fig.savefig(output_dir / f"{fname}.png", dpi=200, bbox_inches="tight")
@@ -212,6 +251,10 @@ def batch_scaling_chart(df: pd.DataFrame, output_dir: Path,
     if sub.empty:
         return
 
+    # Need multiple batch sizes to draw scaling lines
+    if sub["batch_size"].nunique() < 2:
+        return
+
     fig, ax = plt.subplots(figsize=(12, 8))
     for name in sub["display_name"].unique():
         m = sub[sub["display_name"] == name].sort_values("batch_size")
@@ -278,7 +321,7 @@ def cnn_vs_vit_summary(df: pd.DataFrame, output_dir: Path,
 
 def main():
     parser = argparse.ArgumentParser(description="GeoSpeedy visualization")
-    parser.add_argument("--input", default="results/benchmark_results.csv")
+    parser.add_argument("--input", default="results")
     parser.add_argument("--output", default="figures")
     args = parser.parse_args()
 
@@ -288,33 +331,39 @@ def main():
     print(f"📊 Loading results from {args.input}")
     df = load_results(args.input)
     print(f"   {len(df)} rows loaded")
+    if "gpu_name" in df.columns:
+        for gpu in df["gpu_name"].unique():
+            n = len(df[df["gpu_name"] == gpu])
+            print(f"   GPU: {gpu} ({n} rows)")
     print()
 
     # Determine available batch sizes and precisions
     batch_sizes = sorted(df["batch_size"].dropna().unique().astype(int))
-    best_bs = 32 if 32 in batch_sizes else batch_sizes[-1]
+    best_bs = 32 if 32 in batch_sizes else (batch_sizes[-1] if batch_sizes else None)
+    # If only one batch size, use None (picks best per model)
+    chart_bs = best_bs if len(batch_sizes) > 1 else None
 
     print("📈 Generating bubble charts...")
     for task in ["classification", "segmentation"]:
         for prec in ["fp32", "amp"]:
             for compiled in [False, True]:
                 bubble_chart(df, output_dir, task=task, precision=prec,
-                             batch_size=best_bs, compiled=compiled)
+                             batch_size=chart_bs, compiled=compiled)
 
     print("\n📊 Generating speedup charts...")
     for task in ["classification", "segmentation"]:
-        speedup_chart(df, output_dir, task=task, batch_size=best_bs)
+        speedup_chart(df, output_dir, task=task, batch_size=best_bs or 32)
 
     print("\n📊 Generating compile charts...")
     for task in ["classification", "segmentation"]:
-        compile_chart(df, output_dir, task=task, batch_size=best_bs)
+        compile_chart(df, output_dir, task=task, batch_size=best_bs or 32)
 
     print("\n📊 Generating batch scaling charts...")
     for task in ["classification", "segmentation"]:
         batch_scaling_chart(df, output_dir, task=task, precision="amp")
 
     print("\n📊 Generating CNN vs ViT summary...")
-    cnn_vs_vit_summary(df, output_dir, batch_size=best_bs)
+    cnn_vs_vit_summary(df, output_dir, batch_size=best_bs or 32)
 
     print(f"\n✅ All figures saved to {output_dir}/")
 
