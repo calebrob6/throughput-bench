@@ -26,6 +26,8 @@ def main():
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--runtime-seconds", type=float, default=60.0)
     parser.add_argument("--warmup-steps", type=int, default=10)
+    parser.add_argument("--no-dataloader", action="store_true",
+                        help="Use pre-allocated GPU batch instead of DataLoader")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -36,20 +38,28 @@ def main():
     model = timm.create_model("resnet18", pretrained=False, num_classes=10)
     model.eval().to(device)
 
-    dataloader = create_dataloader(
-        task="classification",
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        length=100_000,
-    )
+    if args.no_dataloader:
+        print(f"Using pre-allocated GPU batch (no DataLoader)")
+        images_gpu = torch.randn(args.batch_size, 3, 224, 224, device=device)
+    else:
+        dataloader = create_dataloader(
+            task="classification",
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            length=100_000,
+        )
 
     # Warmup
     with torch.inference_mode():
-        data_iter = iter(dataloader)
-        for _ in range(args.warmup_steps):
-            images, _ = next(data_iter)
-            images = images.to(device, non_blocking=True)
-            _ = model(images)
+        if args.no_dataloader:
+            for _ in range(args.warmup_steps):
+                _ = model(images_gpu)
+        else:
+            data_iter = iter(dataloader)
+            for _ in range(args.warmup_steps):
+                images, _ = next(data_iter)
+                images = images.to(device, non_blocking=True)
+                _ = model(images)
         torch.cuda.synchronize(device)
 
     # Timed run
@@ -59,21 +69,26 @@ def main():
                 bar_format="{desc}: {elapsed} | {postfix}")
     last_update = start_time
     with torch.inference_mode():
-        data_iter = iter(dataloader)
+        if not args.no_dataloader:
+            data_iter = iter(dataloader)
         while True:
             now = time.perf_counter()
             if now - start_time >= args.runtime_seconds:
                 break
 
-            try:
-                images, _ = next(data_iter)
-            except StopIteration:
-                data_iter = iter(dataloader)
-                images, _ = next(data_iter)
+            if args.no_dataloader:
+                images_gpu = torch.randn(args.batch_size, 3, 224, 224, device=device)
+                _ = model(images_gpu)
+            else:
+                try:
+                    images, _ = next(data_iter)
+                except StopIteration:
+                    data_iter = iter(dataloader)
+                    images, _ = next(data_iter)
+                images = images.to(device, non_blocking=True)
+                _ = model(images)
 
-            images = images.to(device, non_blocking=True)
-            _ = model(images)
-            total_images += images.shape[0]
+            total_images += args.batch_size
 
             if now - last_update >= 0.5:
                 elapsed_so_far = now - start_time
@@ -83,6 +98,7 @@ def main():
                 )
                 last_update = now
 
+    torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - start_time
     images_per_second = total_images / elapsed
     pbar.set_postfix_str(
@@ -90,7 +106,9 @@ def main():
     )
     pbar.close()
 
+    mode = "pre-allocated" if args.no_dataloader else "dataloader"
     print(f"device: {args.device}")
+    print(f"mode: {mode}")
     print(f"batch_size: {args.batch_size}")
     print(f"runtime_seconds: {elapsed:.2f}")
     print(f"total_images: {total_images}")

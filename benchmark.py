@@ -268,7 +268,7 @@ def benchmark_gpu(
     num_warmup: int = 20,
     min_timed_seconds: float = 30.0,
 ) -> dict:
-    """Benchmark on GPU using wall-clock timing."""
+    """Benchmark on GPU using wall-clock timing with DataLoader."""
     use_amp = precision == "amp"
     use_fp16_input = precision == "fp16"
 
@@ -328,9 +328,64 @@ def benchmark_gpu(
     torch.cuda.synchronize()
     elapsed_s = time.perf_counter() - t_start
 
+    return _format_gpu_stats(total_images, batch_size, elapsed_s)
+
+
+def benchmark_gpu_preallocated(
+    model: nn.Module,
+    batch_size: int,
+    precision: str,
+    device: torch.device,
+    num_warmup: int = 20,
+    min_timed_seconds: float = 30.0,
+) -> dict:
+    """Benchmark on GPU with a pre-allocated batch (no DataLoader overhead)."""
+    use_amp = precision == "amp"
+    use_fp16_input = precision == "fp16"
+
+    images = torch.randn(batch_size, 3, 224, 224, device=device)
+    if use_fp16_input:
+        images = images.half()
+
+    # --- warmup ---
+    for _ in range(num_warmup):
+        with torch.no_grad():
+            if use_amp:
+                with torch.amp.autocast("cuda"):
+                    _ = model(images)
+            else:
+                _ = model(images)
+    torch.cuda.synchronize()
+
+    torch.cuda.reset_peak_memory_stats()
+
+    # --- timed ---
+    total_images = 0
+    torch.cuda.synchronize()
+    t_start = time.perf_counter()
+
+    while True:
+        with torch.no_grad():
+            if use_amp:
+                with torch.amp.autocast("cuda"):
+                    _ = model(images)
+            else:
+                _ = model(images)
+        total_images += batch_size
+        if time.perf_counter() - t_start >= min_timed_seconds:
+            break
+
+    torch.cuda.synchronize()
+    elapsed_s = time.perf_counter() - t_start
+    del images
+
+    return _format_gpu_stats(total_images, batch_size, elapsed_s)
+
+
+def _format_gpu_stats(total_images: int, batch_size: int,
+                      elapsed_s: float) -> dict:
     throughput = total_images / elapsed_s
     peak_mem = torch.cuda.max_memory_allocated() / 1e6
-
     return {
         "throughput_mean": float(throughput),
         "throughput_std": 0.0,
@@ -427,17 +482,24 @@ def run_single_benchmark(
             task_params = count_params(model)
 
         if args.device == "cuda":
-            dl = create_dataloader(
-                task=task, batch_size=batch_size, num_workers=8,
-                prefetch_factor=2,
-                length=max(batch_size * 500, 10_000),
-            )
             torch.cuda.reset_peak_memory_stats()
-            stats = benchmark_gpu(
-                model, dl, precision, device,
-                num_warmup=args.warmup,
-                min_timed_seconds=args.timed_seconds,
-            )
+            if args.no_dataloader:
+                stats = benchmark_gpu_preallocated(
+                    model, batch_size, precision, device,
+                    num_warmup=args.warmup,
+                    min_timed_seconds=args.timed_seconds,
+                )
+            else:
+                dl = create_dataloader(
+                    task=task, batch_size=batch_size, num_workers=8,
+                    prefetch_factor=2,
+                    length=max(batch_size * 500, 10_000),
+                )
+                stats = benchmark_gpu(
+                    model, dl, precision, device,
+                    num_warmup=args.warmup,
+                    min_timed_seconds=args.timed_seconds,
+                )
         else:
             dl = create_dataloader(
                 task=task, batch_size=batch_size, num_workers=0,
@@ -709,6 +771,9 @@ def parse_args():
                     help="Output CSV path (default: auto-detect from GPU)")
     p.add_argument("--force", action="store_true",
                     help="Run even if other processes are using the GPU")
+    p.add_argument("--no-dataloader", action="store_true",
+                    help="Use pre-allocated GPU batch instead of DataLoader "
+                         "(maximizes GPU utilization, measures pure compute)")
     return p.parse_args()
 
 
