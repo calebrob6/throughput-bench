@@ -408,6 +408,88 @@ table.data-table td.missing { color: var(--muted); }
   color: var(--muted);
   text-transform: uppercase;
 }
+/* Help trigger + modal */
+#help-trigger {
+  position: fixed;
+  bottom: 16px; left: 16px;
+  z-index: 60;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  background: var(--panel);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(208, 84, 44, 0.55);
+  color: var(--accent);
+  font-family: "Fraunces", serif;
+  font-size: 18px; font-weight: 600;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.55),
+              0 0 14px rgba(208, 84, 44, 0.28),
+              0 0 0 3px rgba(208, 84, 44, 0.08);
+  transition: transform 140ms, box-shadow 140ms, color 140ms, border-color 140ms;
+  padding: 0; line-height: 1;
+}
+#help-trigger:hover {
+  transform: scale(1.08);
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 8px 26px rgba(0,0,0,0.6),
+              0 0 20px rgba(208, 84, 44, 0.45),
+              0 0 0 4px rgba(208, 84, 44, 0.18);
+}
+#help-overlay {
+  position: fixed; inset: 0;
+  background: rgba(14, 11, 8, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px;
+  animation: fadeSlide 280ms ease-out;
+}
+#help-overlay.hidden { display: none; }
+.help-inner {
+  width: 100%; max-width: 620px;
+  padding: 26px 30px 22px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.help-inner h2 {
+  font-family: "Fraunces", serif; font-weight: 500;
+  font-size: 1.55rem; letter-spacing: -0.03em; line-height: 1.1;
+}
+.help-body {
+  font-size: 13px; line-height: 1.65; color: var(--muted-strong);
+}
+.help-body p { margin-bottom: 10px; }
+.help-body b { color: var(--text); font-weight: 600; }
+.help-body code, .help-body kbd {
+  font-family: "JetBrains Mono", monospace; font-size: 11.5px;
+  padding: 1px 6px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  color: var(--text);
+}
+.help-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.help-foot label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.66rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted-strong);
+  margin: 0;
+  cursor: pointer;
+}
+.help-foot input[type="checkbox"] {
+  width: 14px; height: 14px; accent-color: var(--accent);
+  cursor: pointer;
+}
+.help-foot .btn-ghost { padding: 8px 22px; }
 
 </style>
 </head>
@@ -508,6 +590,21 @@ table.data-table td.missing { color: var(--muted); }
   </div>
 </div>
 
+<button id="help-trigger" title="About this page" aria-label="About this page">?</button>
+
+<div id="help-overlay" class="hidden">
+  <div class="help-inner glass">
+    <h2 id="help-title">About</h2>
+    <div class="help-body" id="help-body"></div>
+    <div class="help-foot">
+      <label>
+        <input type="checkbox" id="help-dontshow"> Don't show automatically
+      </label>
+      <button id="help-close" class="btn-ghost">Got it</button>
+    </div>
+  </div>
+</div>
+
 <div id="hud">
   <div class="chip glass a">
     <div class="hdr"><span class="swatch a"></span><span class="name" id="name-a">—</span></div>
@@ -527,6 +624,8 @@ table.data-table td.missing { color: var(--muted); }
 
 <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
 <script type="module">
+
+import { HELP_TITLE, HELP_BODY_HTML, HELP_REPO_URL } from './help-content.js';
 
 // ── Model defaults (used when no CSV data is available) ───────────────────
 const DEFAULT_MODELS = [
@@ -1298,6 +1397,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     $('explore-overlay').classList.add('hidden');
     $('list-overlay').classList.add('hidden');
+    if (!helpOverlay.classList.contains('hidden')) closeHelp();
   }
 });
 $('plot-x').addEventListener('change', renderPlots);
@@ -1306,6 +1406,40 @@ $('plot-gpu').addEventListener('change', () => switchActiveGpu($('plot-gpu').val
 selGSD.addEventListener('change', () => {
   if (!$('explore-overlay').classList.contains('hidden')) renderPlots();
 });
+
+// ── Help / about modal ─────────────────────────────────────────────────────
+const HELP_STORAGE_KEY = 'throughputbencher.help.dontshow';
+const helpOverlay = $('help-overlay');
+const helpDontShow = $('help-dontshow');
+
+// Inject editable copy from help-content.js.
+$('help-title').textContent = HELP_TITLE;
+$('help-body').innerHTML = HELP_BODY_HTML.replaceAll('__REPO_URL__', HELP_REPO_URL);
+
+function openHelp() {
+  try { helpDontShow.checked = localStorage.getItem(HELP_STORAGE_KEY) === '1'; }
+  catch (_) {}
+  helpOverlay.classList.remove('hidden');
+}
+function closeHelp() {
+  try {
+    if (helpDontShow.checked) localStorage.setItem(HELP_STORAGE_KEY, '1');
+    else localStorage.removeItem(HELP_STORAGE_KEY);
+  } catch (_) {}
+  helpOverlay.classList.add('hidden');
+}
+
+$('help-trigger').addEventListener('click', openHelp);
+$('help-close').addEventListener('click', closeHelp);
+helpOverlay.addEventListener('click', (e) => {
+  if (e.target.id === 'help-overlay') closeHelp();
+});
+
+// First-load onboarding — unless the user opted out previously.
+let helpSeen = false;
+try { helpSeen = localStorage.getItem(HELP_STORAGE_KEY) === '1'; } catch (_) {}
+if (!helpSeen) openHelp();
+
 
 // ── Init ───────────────────────────────────────────────────────────────────
 populateGpuSelect();
