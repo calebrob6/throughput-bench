@@ -58,16 +58,17 @@ CSV_COLUMNS = [
     "gpu_mem_gb",
     "batch_size",
     "throughput_mean",
-    "throughput_std",
-    "throughput_median",
-    "throughput_min",
-    "throughput_max",
     "pixels_per_sec",
     "latency_mean_ms",
-    "latency_std_ms",
+    "latency_p50_ms",
+    "latency_p95_ms",
+    "latency_p99_ms",
     "params_M",
     "macs_G",
     "peak_memory_mb",
+    "tf32_enabled",
+    "input_channels",
+    "input_size",
     "pytorch_version",
     "cuda_version",
     "timestamp",
@@ -111,7 +112,48 @@ def collect_hardware_info(gpu_id: int) -> dict:
         "os": platform.system(),
         "cpu": platform.processor() or "unknown",
         "cpu_count": os.cpu_count(),
+        "cudnn_version": (
+            torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
+        ),
     }
+
+    # Extended GPU metadata via nvidia-smi
+    smi_queries = {
+        "driver_version": "driver_version",
+        "persistence_mode": "persistence_mode",
+        "power_limit_w": "power.limit",
+        "clock_max_sm_mhz": "clocks.max.sm",
+        "clock_max_mem_mhz": "clocks.max.mem",
+    }
+    for key, query in smi_queries.items():
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    f"--query-gpu={query}",
+                    "--format=csv,noheader,nounits",
+                    f"--id={gpu_id}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            info[key] = result.stdout.strip()
+        except Exception:
+            info[key] = None
+
+    # Git SHA
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        info["git_sha"] = result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        info["git_sha"] = None
+
     return info
 
 
@@ -184,19 +226,29 @@ def estimate_macs(
     return fcm.get_total_flops() / 1e9
 
 
-def create_model_for_task(config: ModelConfig, task: str, device: torch.device) -> nn.Module | None:
+def create_model_for_task(
+    config: ModelConfig,
+    task: str,
+    device: torch.device,
+    input_channels: int = 3,
+    input_size: int = 224,
+) -> nn.Module | None:
     """Instantiate a model for the given task. Returns None if unsupported."""
     if task == "classification":
-        model = timm.create_model(config.timm_name, pretrained=False, num_classes=10)
-    elif task == "segmentation":
-        if not config.supports_segmentation:
-            return None
-        model = smp.Unet(
-            encoder_name=config.smp_encoder_name,
-            encoder_weights=None,
-            in_channels=3,
-            classes=10,
+        model = timm.create_model(
+            config.timm_name, pretrained=False, num_classes=10, in_chans=input_channels
         )
+    elif task == "segmentation":
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = smp.DPT(
+                encoder_name=config.smp_encoder_name,
+                encoder_weights=None,
+                in_channels=input_channels,
+                classes=10,
+            )
     else:
         raise ValueError(f"Unknown task: {task}")
     model = model.to(device)
@@ -207,6 +259,8 @@ def create_model_for_task(config: ModelConfig, task: str, device: torch.device) 
 def apply_precision(model: nn.Module, precision: str) -> nn.Module:
     if precision == "fp16":
         model = model.half()
+    elif precision == "bf16":
+        model = model.bfloat16()
     return model
 
 
@@ -230,29 +284,47 @@ def find_max_batch_size(
     config: ModelConfig,
     task: str,
     device: torch.device,
+    precision: str = "fp32",
     max_power: int = 20,
     num_validate: int = 3,
+    input_channels: int = 3,
+    input_size: int = 224,
+    start_power: int = 0,
 ) -> int:
     """Find largest power-of-2 batch size that fits in GPU memory.
 
-    Creates a fresh fp32 uncompiled model, tries increasing powers of 2,
+    Creates a fresh model at the given precision, tries increasing powers of 2,
     runs ``num_validate`` forward passes at each size to account for
     cudnn autotuner memory, and cleans up after each OOM.
     Returns the largest successful batch size.
     """
     max_bs = 1
 
-    for power in range(max_power + 1):  # 1, 2, 4, ..., up to 8192
+    use_amp = precision == "amp"
+
+    for power in range(start_power, max_power + 1):
         bs = 2**power
         gpu_cleanup()
         try:
-            model = create_model_for_task(config, task, device)
+            model = create_model_for_task(
+                config, task, device,
+                input_channels=input_channels, input_size=input_size,
+            )
             if model is None:
                 return 0
-            x = torch.randn(bs, 3, 224, 224, device=device)
+            model = apply_precision(model, precision)
+            x = torch.randn(bs, input_channels, input_size, input_size, device=device)
+            if precision == "fp16":
+                x = x.half()
+            elif precision == "bf16":
+                x = x.bfloat16()
             with torch.no_grad():
                 for _ in range(num_validate):
-                    _ = model(x)
+                    if use_amp:
+                        with torch.amp.autocast("cuda"):
+                            _ = model(x)
+                    else:
+                        _ = model(x)
             torch.cuda.synchronize()
             max_bs = bs
             del model, x
@@ -260,12 +332,12 @@ def find_max_batch_size(
         except torch.cuda.OutOfMemoryError:
             break
         except RuntimeError as e:
-            # cuDNN conv2d uses 32-bit indexing internally, which caps total
-            # tensor elements at 2**31 - 1 (~2.147B). ConvNeXt and other
-            # conv-heavy models trip this well before OOM at very large
-            # batch sizes. Treat it like OOM: back off and return the last
-            # size that worked.
-            if "canUse32BitIndexMath" in str(e) or "32-bit indexing" in str(e):
+            msg = str(e)
+            if (
+                "canUse32BitIndexMath" in msg
+                or "32-bit indexing" in msg
+                or "INT_MAX" in msg
+            ):
                 break
             raise
 
@@ -287,7 +359,6 @@ def benchmark_gpu(
 ) -> dict:
     """Benchmark on GPU using wall-clock timing with DataLoader."""
     use_amp = precision == "amp"
-    use_fp16_input = precision == "fp16"
 
     # --- warmup ---
     data_iter = iter(dataloader)
@@ -298,8 +369,10 @@ def benchmark_gpu(
             data_iter = iter(dataloader)
             images, _ = next(data_iter)
         images = images.to(device, non_blocking=True)
-        if use_fp16_input:
+        if precision == "fp16":
             images = images.half()
+        elif precision == "bf16":
+            images = images.bfloat16()
         with torch.no_grad():
             if use_amp:
                 with torch.amp.autocast("cuda"):
@@ -314,6 +387,7 @@ def benchmark_gpu(
     # --- timed iterations ---
     batch_size = dataloader.batch_size
     total_images = 0
+    batch_times: list[float] = []
     data_iter = iter(dataloader)
 
     torch.cuda.synchronize()
@@ -327,25 +401,29 @@ def benchmark_gpu(
             images, _ = next(data_iter)
 
         images = images.to(device, non_blocking=True)
-        if use_fp16_input:
+        if precision == "fp16":
             images = images.half()
+        elif precision == "bf16":
+            images = images.bfloat16()
 
+        t_batch = time.perf_counter()
         with torch.no_grad():
             if use_amp:
                 with torch.amp.autocast("cuda"):
                     _ = model(images)
             else:
                 _ = model(images)
+        torch.cuda.synchronize()
+        batch_times.append(time.perf_counter() - t_batch)
 
         total_images += batch_size
 
         if time.perf_counter() - t_start >= min_timed_seconds:
             break
 
-    torch.cuda.synchronize()
     elapsed_s = time.perf_counter() - t_start
 
-    return _format_gpu_stats(total_images, batch_size, elapsed_s)
+    return _format_gpu_stats(total_images, batch_size, elapsed_s, batch_times)
 
 
 def benchmark_gpu_preallocated(
@@ -355,14 +433,17 @@ def benchmark_gpu_preallocated(
     device: torch.device,
     num_warmup: int = 20,
     min_timed_seconds: float = 30.0,
+    input_channels: int = 3,
+    input_size: int = 224,
 ) -> dict:
     """Benchmark on GPU with a pre-allocated batch (no DataLoader overhead)."""
     use_amp = precision == "amp"
-    use_fp16_input = precision == "fp16"
 
-    images = torch.randn(batch_size, 3, 224, 224, device=device)
-    if use_fp16_input:
+    images = torch.randn(batch_size, input_channels, input_size, input_size, device=device)
+    if precision == "fp16":
         images = images.half()
+    elif precision == "bf16":
+        images = images.bfloat16()
 
     # --- warmup ---
     for _ in range(num_warmup):
@@ -378,38 +459,53 @@ def benchmark_gpu_preallocated(
 
     # --- timed ---
     total_images = 0
+    batch_times: list[float] = []
     torch.cuda.synchronize()
     t_start = time.perf_counter()
 
     while True:
+        t_batch = time.perf_counter()
         with torch.no_grad():
             if use_amp:
                 with torch.amp.autocast("cuda"):
                     _ = model(images)
             else:
                 _ = model(images)
+        torch.cuda.synchronize()
+        batch_times.append(time.perf_counter() - t_batch)
         total_images += batch_size
         if time.perf_counter() - t_start >= min_timed_seconds:
             break
 
-    torch.cuda.synchronize()
     elapsed_s = time.perf_counter() - t_start
     del images
 
-    return _format_gpu_stats(total_images, batch_size, elapsed_s)
+    return _format_gpu_stats(total_images, batch_size, elapsed_s, batch_times)
 
 
-def _format_gpu_stats(total_images: int, batch_size: int, elapsed_s: float) -> dict:
+def _format_gpu_stats(
+    total_images: int, batch_size: int, elapsed_s: float, batch_times: list[float]
+) -> dict:
     throughput = total_images / elapsed_s
     peak_mem = torch.cuda.max_memory_allocated() / 1e6
+    latency_mean_ms = elapsed_s / (total_images / batch_size) * 1000
+
+    if batch_times:
+        import numpy as np
+
+        batch_ms = np.array(batch_times) * 1000
+        p50 = float(np.percentile(batch_ms, 50))
+        p95 = float(np.percentile(batch_ms, 95))
+        p99 = float(np.percentile(batch_ms, 99))
+    else:
+        p50 = p95 = p99 = latency_mean_ms
+
     return {
         "throughput_mean": float(throughput),
-        "throughput_std": 0.0,
-        "throughput_median": float(throughput),
-        "throughput_min": float(throughput),
-        "throughput_max": float(throughput),
-        "latency_mean_ms": float(elapsed_s / (total_images / batch_size) * 1000),
-        "latency_std_ms": 0.0,
+        "latency_mean_ms": float(latency_mean_ms),
+        "latency_p50_ms": p50,
+        "latency_p95_ms": p95,
+        "latency_p99_ms": p99,
         "peak_memory_mb": float(peak_mem),
         "num_iterations": total_images // batch_size,
     }
@@ -432,13 +528,19 @@ def run_single_benchmark(
     gpu_mem_gb: float,
     macs_g: float,
     params_m: float,
+    tf32_enabled: bool = False,
+    input_channels: int = 3,
+    input_size: int = 224,
 ) -> dict | None:
     """Run a single benchmark config. Returns a CSV row dict or None."""
     gpu_cleanup()
     model = None
     dl = None
     try:
-        model = create_model_for_task(mc, task, device)
+        model = create_model_for_task(
+            mc, task, device,
+            input_channels=input_channels, input_size=input_size,
+        )
         if model is None:
             return None
         model = apply_precision(model, precision)
@@ -446,10 +548,25 @@ def run_single_benchmark(
         actual_compile_mode = compile_mode if compile_ok else "none"
         actual_compiled = compile_ok and compile_mode != "none"
 
-        # Compute seg-specific params
+        # Compute seg-specific params and MACs (U-Net wraps the backbone)
         task_macs, task_params = macs_g, params_m
         if task == "segmentation":
             task_params = count_params(model)
+            try:
+                # Estimate MACs on a fresh fp32 CPU copy to avoid device/dtype issues
+                seg_model_cpu = create_model_for_task(
+                    mc, task, torch.device("cpu"),
+                    input_channels=input_channels,
+                    input_size=input_size,
+                )
+                if seg_model_cpu is not None:
+                    seg_shape = (1, input_channels, input_size, input_size)
+                    task_macs = estimate_macs(
+                        seg_model_cpu, input_shape=seg_shape, device="cpu"
+                    )
+                    del seg_model_cpu
+            except Exception:
+                pass  # fall back to backbone MACs
 
         torch.cuda.reset_peak_memory_stats()
         if not args.dataloader:
@@ -460,6 +577,8 @@ def run_single_benchmark(
                 device,
                 num_warmup=args.warmup,
                 min_timed_seconds=args.timed_seconds,
+                input_channels=input_channels,
+                input_size=input_size,
             )
         else:
             dl = create_dataloader(
@@ -468,6 +587,8 @@ def run_single_benchmark(
                 num_workers=8,
                 prefetch_factor=2,
                 length=max(batch_size * 500, 10_000),
+                channels=input_channels,
+                size=input_size,
             )
             stats = benchmark_gpu(
                 model,
@@ -478,7 +599,7 @@ def run_single_benchmark(
                 min_timed_seconds=args.timed_seconds,
             )
 
-        pixels_per_sec = stats["throughput_mean"] * 224 * 224
+        pixels_per_sec = stats["throughput_mean"] * input_size * input_size
         return {
             "model_name": mc.timm_name,
             "display_name": mc.display_name,
@@ -492,16 +613,17 @@ def run_single_benchmark(
             "gpu_mem_gb": f"{gpu_mem_gb:.1f}",
             "batch_size": batch_size,
             "throughput_mean": f"{stats['throughput_mean']:.2f}",
-            "throughput_std": f"{stats['throughput_std']:.2f}",
-            "throughput_median": f"{stats['throughput_median']:.2f}",
-            "throughput_min": f"{stats['throughput_min']:.2f}",
-            "throughput_max": f"{stats['throughput_max']:.2f}",
             "pixels_per_sec": f"{pixels_per_sec:.0f}",
             "latency_mean_ms": f"{stats['latency_mean_ms']:.3f}",
-            "latency_std_ms": f"{stats['latency_std_ms']:.3f}",
+            "latency_p50_ms": f"{stats['latency_p50_ms']:.3f}",
+            "latency_p95_ms": f"{stats['latency_p95_ms']:.3f}",
+            "latency_p99_ms": f"{stats['latency_p99_ms']:.3f}",
             "params_M": f"{task_params:.2f}",
             "macs_G": f"{task_macs:.2f}",
             "peak_memory_mb": f"{stats['peak_memory_mb']:.1f}",
+            "tf32_enabled": tf32_enabled,
+            "input_channels": input_channels,
+            "input_size": input_size,
             "pytorch_version": torch.__version__,
             "cuda_version": get_cuda_version(),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -517,7 +639,8 @@ def run_single_benchmark(
         if isinstance(e, BackendCompilerFailed):
             print(f"\n    ⚠ torch.compile failed at runtime (skipping): {e}")
             return "COMPILE_ERROR"
-        if "canUse32BitIndexMath" in str(e) or "32-bit indexing" in str(e):
+        msg = str(e)
+        if "canUse32BitIndexMath" in msg or "32-bit indexing" in msg or "INT_MAX" in msg:
             print(
                 "\n    ⚠ Batch size exceeds cuDNN 32-bit indexing limit "
                 "(~2.147B elements); skipping."
@@ -555,7 +678,9 @@ def run_benchmark(args):
     # this, the fp32 precision mode runs strict IEEE-754 and looks
     # artificially slow on H100/A100.
     torch.set_float32_matmul_precision("high")
-    print('🔢 float32 matmul precision: "high" (TF32 enabled on fp32 matmuls)')
+    tf32_enabled = torch.cuda.get_device_capability(0) >= (8, 0)
+    tf32_label = "enabled" if tf32_enabled else "not available"
+    print(f'🔢 float32 matmul precision: "high" (TF32 {tf32_label} on this GPU)')
 
     if not check_gpu_free(gpu_id):
         if args.force:
@@ -583,12 +708,15 @@ def run_benchmark(args):
     print(f"💾 Hardware info: {hw_path}")
 
     model_configs = get_models(args.models if args.models else None)
+    input_channels = args.input_channels
+    input_size = args.input_size
     print(f"📋 Models: {len(model_configs)}")
     print(f"📋 Tasks: {args.tasks}")
     print(f"📋 Precisions: {args.precisions}")
     print(f"📋 Compile modes: {args.compile_modes}")
+    print(f"📋 Input: {input_channels}×{input_size}×{input_size}")
     if auto_batch:
-        print("📋 Batch size: auto (largest power-of-2 that fits)")
+        print("📋 Batch size: auto (largest power-of-2 that fits, per precision)")
     else:
         print(f"📋 Batch sizes: {args.batch_sizes}")
     print(f"📋 Timed seconds: {args.timed_seconds}")
@@ -629,35 +757,51 @@ def run_benchmark(args):
         # Compute MACs once on CPU
         macs_g, params_m = -1.0, -1.0
         try:
-            tmp = timm.create_model(mc.timm_name, pretrained=False, num_classes=10)
+            tmp = timm.create_model(
+                mc.timm_name, pretrained=False, num_classes=10, in_chans=input_channels
+            )
             tmp.eval()
             params_m = count_params(tmp)
-            macs_g = estimate_macs(tmp, device="cpu")
+            cls_shape = (1, input_channels, input_size, input_size)
+            macs_g = estimate_macs(tmp, input_shape=cls_shape, device="cpu")
             del tmp
             gc.collect()
         except Exception as e:
             print(f"  ⚠ Could not compute MACs: {e}")
 
         for task in args.tasks:
-            if task == "segmentation" and not mc.supports_segmentation:
-                print("  ⏭ Skipping segmentation (not supported)")
-                continue
 
-            # Determine batch sizes for this model+task
-            if auto_batch:
-                print(f"  🔍 Finding max batch size for {task}...", end=" ", flush=True)
-                max_bs = find_max_batch_size(mc, task, device)
-                if max_bs == 0:
-                    print("SKIP (model unsupported)")
-                    continue
-                print(f"bs={max_bs}")
-                batch_sizes_to_run = [max_bs]
-            elif args.batch_sizes:
-                batch_sizes_to_run = args.batch_sizes
-            else:
-                batch_sizes_to_run = [32]
+            # Track last successful BS power for smarter probing across precisions
+            last_max_power = 0
 
             for prec in args.precisions:
+                # Skip bf16 on GPUs that don't support it (pre-Ampere)
+                if prec == "bf16" and not tf32_enabled:
+                    print(f"  ⏭ Skipping {prec} (not supported on this GPU)")
+                    continue
+
+                # Determine batch sizes for this model+task+precision
+                if auto_batch:
+                    print(f"  🔍 Finding max batch size for {task}/{prec}...", end=" ", flush=True)
+                    max_bs = find_max_batch_size(
+                        mc, task, device,
+                        precision=prec,
+                        input_channels=input_channels,
+                        input_size=input_size,
+                        start_power=max(0, last_max_power - 1),
+                    )
+                    if max_bs == 0:
+                        print("SKIP (model unsupported)")
+                        continue
+                    print(f"bs={max_bs}")
+                    batch_sizes_to_run = [max_bs]
+                    # Remember the power for the next precision probe
+                    last_max_power = max_bs.bit_length() - 1
+                elif args.batch_sizes:
+                    batch_sizes_to_run = args.batch_sizes
+                else:
+                    batch_sizes_to_run = [32]
+
                 for cm in args.compile_modes:
                     for bs in batch_sizes_to_run:
                         completed += 1
@@ -682,6 +826,9 @@ def run_benchmark(args):
                             gpu_mem_gb,
                             macs_g,
                             params_m,
+                            tf32_enabled=tf32_enabled,
+                            input_channels=input_channels,
+                            input_size=input_size,
                         )
                         if result == "COMPILE_ERROR":
                             print("SKIP (compile error)")
@@ -708,6 +855,9 @@ def run_benchmark(args):
                                     gpu_mem_gb,
                                     macs_g,
                                     params_m,
+                                    tf32_enabled=tf32_enabled,
+                                    input_channels=input_channels,
+                                    input_size=input_size,
                                 )
                             if result == "OOM" or result is None:
                                 print("OOM")
@@ -790,8 +940,8 @@ def parse_args():
         "--precisions",
         nargs="+",
         default=["fp32", "fp16", "amp"],
-        choices=["fp32", "fp16", "amp"],
-        help="Precision modes",
+        choices=["fp32", "fp16", "amp", "bf16"],
+        help="Precision modes (bf16 requires Ampere+ GPU)",
     )
     p.add_argument(
         "--compile-modes",
@@ -837,6 +987,18 @@ def parse_args():
         help="Use a PyTorch DataLoader to feed data (adds realistic pipeline "
         "overhead). Default is a pre-allocated GPU batch, which measures "
         "peak compute throughput.",
+    )
+    p.add_argument(
+        "--input-channels",
+        type=int,
+        default=3,
+        help="Number of input channels (default: 3). Use 4/6/13 for multispectral EO data.",
+    )
+    p.add_argument(
+        "--input-size",
+        type=int,
+        default=224,
+        help="Spatial input size (default: 224). Images are input_size × input_size.",
     )
     return p.parse_args()
 

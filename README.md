@@ -68,10 +68,10 @@ coverage_rate  = throughput × area_per_patch  km²/s
 | ViT | Ti/16, S/16, B/16, L/16 | ViT | ❌* |
 | DeiT3 | S/16, B/16 | ViT | ❌* |
 | Swin | Tiny, Small, Base, Large | ViT | ✅ |
-| BEiT | B/16, L/16 | ViT | ❌* |
+| BEiT | B/16, L/16 | ViT | ✅ |
 | CoAtNet | 0, 2 | Hybrid | ✅ |
 
-*\*Plain ViTs produce single-scale features incompatible with U-Net's multi-scale encoder-decoder architecture. Swin Transformers are hierarchical and work natively.*
+*All models use [SMP DPT](https://github.com/qubvel-org/segmentation_models.pytorch) (Dense Prediction Transformer) as the segmentation decoder, which handles both hierarchical (CNN, Swin) and non-hierarchical (ViT, DeiT, BEiT) backbones.*
 
 ## Globe Race 🏁
 
@@ -90,7 +90,7 @@ Open [`webapp/index.html`](webapp/index.html) in a browser for a 3D globe visual
 - **Memory**: Peak GPU memory reset after warmup; reports steady-state inference memory
 - **Cleanup**: `torch.cuda.empty_cache()` + `gc.collect()` + sleep between models
 - **Data**: Random 3×224×224 tensors via DataLoader (`num_workers=8`, `prefetch_factor=2`, `pin_memory=True`). Use `--input-channels` and `--input-size` to customize (default: 3×224×224).
-- **Segmentation**: SMP U-Net with timm encoders, 10 output classes, no pretrained weights
+- **Segmentation**: SMP DPT (Dense Prediction Transformer) decoder with timm encoders, 10 output classes, no pretrained weights. DPT supports all backbone types (CNN, ViT, hybrid) for fair cross-architecture comparison.
 
 ### Precision Modes
 

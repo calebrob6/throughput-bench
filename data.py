@@ -1,6 +1,6 @@
 """Synthetic dataset and DataLoader for throughput benchmarking.
 
-Generates constant 3×224×224 patches with dummy labels. Used by
+Generates constant patches with dummy labels. Used by
 benchmark.py when running with the DataLoader path.
 """
 
@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 
 
 class RandomPatchDataset(Dataset):
-    """Dataset of random 3×224×224 tensors for throughput benchmarking.
+    """Dataset of random tensors for throughput benchmarking.
 
     For classification returns (image, label).
     For segmentation returns (image, mask).
@@ -48,10 +48,12 @@ def create_dataloader(
     num_workers: int = 4,
     prefetch_factor: int | None = 2,
     length: int = 10_000,
+    channels: int = 3,
+    size: int = 224,
     **kwargs,
 ) -> DataLoader:
     """Create a DataLoader with random patches."""
-    dataset = RandomPatchDataset(length=length, task=task)
+    dataset = RandomPatchDataset(length=length, task=task, channels=channels, size=size)
     loader_kwargs = dict(
         batch_size=batch_size,
         num_workers=num_workers,

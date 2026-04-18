@@ -55,13 +55,14 @@ def load_results(path: str) -> pd.DataFrame:
     df = df[df["throughput_mean"] != "OOM"].copy()
     for col in [
         "throughput_mean",
-        "throughput_std",
-        "throughput_median",
         "pixels_per_sec",
         "params_M",
         "macs_G",
         "peak_memory_mb",
         "latency_mean_ms",
+        "latency_p50_ms",
+        "latency_p95_ms",
+        "latency_p99_ms",
         "batch_size",
     ]:
         if col in df.columns:

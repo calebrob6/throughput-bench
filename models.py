@@ -97,7 +97,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "ViT",
         "vit",
         FAMILY_COLORS["ViT"],
-        supports_segmentation=False,
     ),
     ModelConfig(
         "vit_small_patch16_224",
@@ -105,7 +104,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "ViT",
         "vit",
         FAMILY_COLORS["ViT"],
-        supports_segmentation=False,
     ),
     ModelConfig(
         "vit_base_patch16_224",
@@ -113,7 +111,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "ViT",
         "vit",
         FAMILY_COLORS["ViT"],
-        supports_segmentation=False,
     ),
     ModelConfig(
         "vit_large_patch16_224",
@@ -121,7 +118,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "ViT",
         "vit",
         FAMILY_COLORS["ViT"],
-        supports_segmentation=False,
     ),
     # DeiT family
     ModelConfig(
@@ -130,7 +126,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "DeiT",
         "vit",
         FAMILY_COLORS["DeiT"],
-        supports_segmentation=False,
     ),
     ModelConfig(
         "deit3_base_patch16_224",
@@ -138,7 +133,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "DeiT",
         "vit",
         FAMILY_COLORS["DeiT"],
-        supports_segmentation=False,
     ),
     # Swin Transformer family (hierarchical — segmentation works)
     ModelConfig("swin_tiny_patch4_window7_224", "Swin-T", "Swin", "vit", FAMILY_COLORS["Swin"]),
@@ -152,7 +146,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "BEiT",
         "vit",
         FAMILY_COLORS["BEiT"],
-        supports_segmentation=False,
     ),
     ModelConfig(
         "beit_large_patch16_224",
@@ -160,7 +153,6 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "BEiT",
         "vit",
         FAMILY_COLORS["BEiT"],
-        supports_segmentation=False,
     ),
     # ── Hybrids ───────────────────────────────────────────────────────────
     ModelConfig("coatnet_0_224", "CoAtNet-0", "CoAtNet", "hybrid", FAMILY_COLORS["CoAtNet"]),
