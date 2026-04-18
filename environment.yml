@@ -1,7 +1,5 @@
 name: throughput-bencher
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
 dependencies:
   - python>=3.10
