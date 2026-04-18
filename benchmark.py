@@ -234,6 +234,13 @@ def create_model_for_task(
     input_size: int = 224,
 ) -> nn.Module | None:
     """Instantiate a model for the given task. Returns None if unsupported."""
+    if config.source == "geo":
+        if task == "segmentation":
+            return None  # Geo models are encoder-only
+        from geo_models import create_geo_model
+
+        return create_geo_model(config.geo_model_key, device)
+
     if task == "classification":
         model = timm.create_model(
             config.timm_name, pretrained=False, num_classes=10, in_chans=input_channels
@@ -697,7 +704,7 @@ def run_benchmark(args):
     # Auto-detect output path if user didn't specify
     if args.output == "auto":
         slug = get_gpu_slug()
-        output_path = Path(f"results/v2/{slug}.csv")
+        output_path = Path(f"results/v3/{slug}.csv")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Save hardware info
@@ -754,22 +761,43 @@ def run_benchmark(args):
         print(f"  {mc.display_name} ({mc.timm_name}) — {mc.arch_type}")
         print(f"{'=' * 70}")
 
+        # For geo models, use their native input dimensions
+        if mc.source == "geo":
+            model_channels = mc.native_channels
+            model_size = mc.native_size
+        else:
+            model_channels = input_channels
+            model_size = input_size
+
         # Compute MACs once on CPU
         macs_g, params_m = -1.0, -1.0
         try:
-            tmp = timm.create_model(
-                mc.timm_name, pretrained=False, num_classes=10, in_chans=input_channels
-            )
-            tmp.eval()
-            params_m = count_params(tmp)
-            cls_shape = (1, input_channels, input_size, input_size)
-            macs_g = estimate_macs(tmp, input_shape=cls_shape, device="cpu")
+            if mc.source == "geo":
+                from geo_models import create_geo_model
+
+                tmp = create_geo_model(mc.geo_model_key, torch.device("cpu"))
+                params_m = count_params(tmp)
+                cls_shape = (1, model_channels, model_size, model_size)
+                macs_g = estimate_macs(tmp, input_shape=cls_shape, device="cpu")
+            else:
+                tmp = timm.create_model(
+                    mc.timm_name, pretrained=False, num_classes=10,
+                    in_chans=model_channels,
+                )
+                tmp.eval()
+                params_m = count_params(tmp)
+                cls_shape = (1, model_channels, model_size, model_size)
+                macs_g = estimate_macs(tmp, input_shape=cls_shape, device="cpu")
             del tmp
             gc.collect()
         except Exception as e:
             print(f"  ⚠ Could not compute MACs: {e}")
 
         for task in args.tasks:
+            # Skip segmentation for geo models (encoder-only)
+            if task == "segmentation" and mc.source == "geo":
+                print("  ⏭ Skipping segmentation (geo model, encoder-only)")
+                continue
 
             # Track last successful BS power for smarter probing across precisions
             last_max_power = 0
@@ -780,14 +808,23 @@ def run_benchmark(args):
                     print(f"  ⏭ Skipping {prec} (not supported on this GPU)")
                     continue
 
+                # Skip non-fp32 for geo models that only support fp32
+                if prec != "fp32" and mc.source == "geo":
+                    from geo_models import GEO_MODEL_REGISTRY
+
+                    entry = GEO_MODEL_REGISTRY.get(mc.geo_model_key, {})
+                    if entry.get("fp32_only", False):
+                        print(f"  ⏭ Skipping {prec} (model only supports fp32)")
+                        continue
+
                 # Determine batch sizes for this model+task+precision
                 if auto_batch:
                     print(f"  🔍 Finding max batch size for {task}/{prec}...", end=" ", flush=True)
                     max_bs = find_max_batch_size(
                         mc, task, device,
                         precision=prec,
-                        input_channels=input_channels,
-                        input_size=input_size,
+                        input_channels=model_channels,
+                        input_size=model_size,
                         start_power=max(0, last_max_power - 1),
                     )
                     if max_bs == 0:
@@ -827,8 +864,8 @@ def run_benchmark(args):
                             macs_g,
                             params_m,
                             tf32_enabled=tf32_enabled,
-                            input_channels=input_channels,
-                            input_size=input_size,
+                            input_channels=model_channels,
+                            input_size=model_size,
                         )
                         if result == "COMPILE_ERROR":
                             print("SKIP (compile error)")
@@ -856,8 +893,8 @@ def run_benchmark(args):
                                     macs_g,
                                     params_m,
                                     tf32_enabled=tf32_enabled,
-                                    input_channels=input_channels,
-                                    input_size=input_size,
+                                    input_channels=model_channels,
+                                    input_size=model_size,
                                 )
                             if result == "OOM" or result is None:
                                 print("OOM")

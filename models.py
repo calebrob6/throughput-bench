@@ -1,7 +1,7 @@
 """Model registry for ThroughputBencher benchmarks.
 
 Each model entry defines the timm model name, display metadata, and whether
-it supports SMP U-Net segmentation (requires hierarchical multi-scale features).
+it supports SMP DPT segmentation (requires multi-scale or single-scale features).
 """
 
 from dataclasses import dataclass
@@ -15,6 +15,10 @@ class ModelConfig:
     arch_type: str  # "cnn", "vit", "hybrid"
     color: str
     supports_segmentation: bool = True
+    source: str = "timm"  # "timm", "geo"
+    native_channels: int = 3
+    native_size: int = 224
+    geo_model_key: str = ""  # key into GEO_MODEL_REGISTRY
 
     @property
     def smp_encoder_name(self) -> str:
@@ -33,6 +37,12 @@ FAMILY_COLORS = {
     "Swin": "#bcbd22",
     "BEiT": "#17becf",
     "CoAtNet": "#7f7f7f",
+    # Geo foundation model families
+    "DOFA": "#e6550d",
+    "CROMA": "#31a354",
+    "SenPaMAE": "#756bb1",
+    "Galileo": "#de2d26",
+    "OlmoEarth": "#3182bd",
 }
 
 MODEL_REGISTRY: list[ModelConfig] = [
@@ -157,6 +167,59 @@ MODEL_REGISTRY: list[ModelConfig] = [
     # ── Hybrids ───────────────────────────────────────────────────────────
     ModelConfig("coatnet_0_224", "CoAtNet-0", "CoAtNet", "hybrid", FAMILY_COLORS["CoAtNet"]),
     ModelConfig("coatnet_2_224", "CoAtNet-2", "CoAtNet", "hybrid", FAMILY_COLORS["CoAtNet"]),
+    # ── Geospatial Foundation Models ──────────────────────────────────────
+    # These use custom architectures from geobreeze and olmoearth.
+    # Encoder-only benchmarking (classification task only, no segmentation).
+    ModelConfig(
+        "dofa_base", "DOFA-B/16", "DOFA", "vit", FAMILY_COLORS["DOFA"],
+        supports_segmentation=False, source="geo", native_channels=3,
+        native_size=224, geo_model_key="dofa_base",
+    ),
+    ModelConfig(
+        "dofa_large", "DOFA-L/16", "DOFA", "vit", FAMILY_COLORS["DOFA"],
+        supports_segmentation=False, source="geo", native_channels=3,
+        native_size=224, geo_model_key="dofa_large",
+    ),
+    ModelConfig(
+        "croma_optical", "CROMA-Optical", "CROMA", "vit", FAMILY_COLORS["CROMA"],
+        supports_segmentation=False, source="geo", native_channels=12,
+        native_size=120, geo_model_key="croma_optical",
+    ),
+    ModelConfig(
+        "croma_sar", "CROMA-SAR", "CROMA", "vit", FAMILY_COLORS["CROMA"],
+        supports_segmentation=False, source="geo", native_channels=2,
+        native_size=120, geo_model_key="croma_sar",
+    ),
+    ModelConfig(
+        "senpamae", "SenPaMAE-B/16", "SenPaMAE", "vit", FAMILY_COLORS["SenPaMAE"],
+        supports_segmentation=False, source="geo", native_channels=3,
+        native_size=144, geo_model_key="senpamae",
+    ),
+    ModelConfig(
+        "galileo_s2", "Galileo-S2", "Galileo", "vit", FAMILY_COLORS["Galileo"],
+        supports_segmentation=False, source="geo", native_channels=10,
+        native_size=64, geo_model_key="galileo_s2",
+    ),
+    ModelConfig(
+        "olmoearth_nano", "OlmoEarth-Nano", "OlmoEarth", "vit",
+        FAMILY_COLORS["OlmoEarth"], supports_segmentation=False, source="geo",
+        native_channels=12, native_size=128, geo_model_key="olmoearth_nano",
+    ),
+    ModelConfig(
+        "olmoearth_tiny", "OlmoEarth-Tiny", "OlmoEarth", "vit",
+        FAMILY_COLORS["OlmoEarth"], supports_segmentation=False, source="geo",
+        native_channels=12, native_size=128, geo_model_key="olmoearth_tiny",
+    ),
+    ModelConfig(
+        "olmoearth_base", "OlmoEarth-Base", "OlmoEarth", "vit",
+        FAMILY_COLORS["OlmoEarth"], supports_segmentation=False, source="geo",
+        native_channels=12, native_size=128, geo_model_key="olmoearth_base",
+    ),
+    ModelConfig(
+        "olmoearth_large", "OlmoEarth-Large", "OlmoEarth", "vit",
+        FAMILY_COLORS["OlmoEarth"], supports_segmentation=False, source="geo",
+        native_channels=12, native_size=128, geo_model_key="olmoearth_large",
+    ),
 ]
 
 
