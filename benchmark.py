@@ -697,7 +697,7 @@ def run_benchmark(args):
     # Auto-detect output path if user didn't specify
     if args.output == "auto":
         slug = get_gpu_slug()
-        output_path = Path(f"results/{slug}.csv")
+        output_path = Path(f"results/v2/{slug}.csv")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Save hardware info
@@ -939,16 +939,16 @@ def parse_args():
     p.add_argument(
         "--precisions",
         nargs="+",
-        default=["fp32", "fp16", "amp"],
+        default=["fp32", "fp16", "amp", "bf16"],
         choices=["fp32", "fp16", "amp", "bf16"],
-        help="Precision modes (bf16 requires Ampere+ GPU)",
+        help="Precision modes (bf16 auto-skipped on pre-Ampere GPUs)",
     )
     p.add_argument(
         "--compile-modes",
         nargs="+",
-        default=["none"],
+        default=["none", "default"],
         choices=["none", "default", "max-autotune"],
-        help="torch.compile modes (default: none; use 'default' to include compiled runs)",
+        help="torch.compile modes to benchmark (default: none + default)",
     )
     p.add_argument(
         "--batch-sizes",
