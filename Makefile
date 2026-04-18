@@ -7,7 +7,7 @@
 GPU_ID ?= 0
 PYTHON ?= python
 
-.PHONY: setup benchmark benchmark-quick visualize lint format clean help
+.PHONY: setup benchmark benchmark-quick benchmark-compiled visualize lint format clean help
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -27,6 +27,9 @@ benchmark:  ## Run full benchmark (auto batch size, 30s/config, all models)
 	$(PYTHON) benchmark.py --gpu-id $(GPU_ID)
 	@echo ""
 	@echo "Now run 'make visualize' to generate charts"
+
+benchmark-compiled:  ## Run benchmark with torch.compile (default + max-autotune)
+	$(PYTHON) benchmark.py --gpu-id $(GPU_ID) --compile-modes default max-autotune
 
 benchmark-quick:  ## Quick benchmark (4 models, 10s/config)
 	$(PYTHON) benchmark.py --gpu-id $(GPU_ID) \

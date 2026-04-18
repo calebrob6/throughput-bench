@@ -4,7 +4,7 @@ A simple deep learning model throughput benchmarking tool with geospatial machin
 
 When choosing a model backbone for large-scale inference — mapping a country from satellite imagery, processing daily sensor feeds, running disaster response pipelines — throughput (images/sec) is often as important as accuracy. Yet most papers and benchmarks focus on accuracy alone, and practitioners are left guessing how fast a model will actually run on their hardware.
 
-ThroughputBencher measures end-to-end inference throughput for **29 model architectures** across CNNs, Vision Transformers, and hybrids, on both classification and segmentation tasks. It tests precision modes (fp32, fp16, AMP), `torch.compile`, and automatically finds the optimal batch size for your GPU. Results are saved as a CSV for easy analysis, and a [3D globe visualization](webapp/index.html) lets you see what these throughput numbers mean in terms of real-world coverage.
+ThroughputBencher measures end-to-end inference throughput for **29 model architectures** across CNNs, Vision Transformers, and hybrids, on both classification and segmentation tasks. It tests precision modes (fp32, fp16, bf16, AMP), `torch.compile`, and automatically finds the optimal batch size for your GPU. Results are saved as a CSV for easy analysis, and a [3D globe visualization](webapp/index.html) lets you see what these throughput numbers mean in terms of real-world coverage.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -89,8 +89,25 @@ Open [`webapp/index.html`](webapp/index.html) in a browser for a 3D globe visual
 - **Throughput**: `total_images / wall_clock_time`
 - **Memory**: Peak GPU memory reset after warmup; reports steady-state inference memory
 - **Cleanup**: `torch.cuda.empty_cache()` + `gc.collect()` + sleep between models
-- **Data**: Random 3×224×224 tensors via DataLoader (`num_workers=8`, `prefetch_factor=2`, `pin_memory=True`)
+- **Data**: Random 3×224×224 tensors via DataLoader (`num_workers=8`, `prefetch_factor=2`, `pin_memory=True`). Use `--input-channels` and `--input-size` to customize (default: 3×224×224).
 - **Segmentation**: SMP U-Net with timm encoders, 10 output classes, no pretrained weights
+
+### Precision Modes
+
+- **fp32**: Standard 32-bit floating point. On Ampere+ GPUs (A100, H100, etc.), `torch.set_float32_matmul_precision("high")` enables **TF32 tensor cores** for matmuls, so "fp32" actually uses TF32 precision (10-bit mantissa instead of 23-bit). This matches what virtually all modern "fp32" benchmarks measure. The CSV includes a `tf32_enabled` column to disambiguate.
+- **fp16**: Full model conversion to float16.
+- **bf16**: Available on Ampere+ GPUs (compute capability ≥ 8.0). Automatically skipped on older GPUs that lack hardware support.
+- **AMP**: PyTorch automatic mixed precision (`torch.autocast`).
+
+### Compiled Benchmarks
+
+`torch.compile` can significantly accelerate inference. Use `make benchmark-compiled` to run with both `default` and `max-autotune` compile modes, or pass `--compile-modes` directly:
+
+```bash
+python benchmark.py --gpu-id 0 --compile-modes default max-autotune
+```
+
+Results include `compiled` and `compile_mode` columns in the CSV.
 
 ### DataLoader vs Pre-allocated Batches
 
@@ -130,11 +147,17 @@ make benchmark GPU_ID=2
 # Quick test (4 models, 10s per config)
 make benchmark-quick
 
+# Run with torch.compile (default + max-autotune modes)
+make benchmark-compiled
+
 # Custom run
 python benchmark.py --gpu-id 0 --models resnet50 vit_base_patch16_224
 
 # Manual batch size sweep
 python benchmark.py --gpu-id 0 --batch-sizes 1 8 32 64
+
+# Custom input configuration (e.g., 4-channel 128×128 images)
+python benchmark.py --gpu-id 0 --input-channels 4 --input-size 128
 
 # Generate charts from all CSVs in results/
 make visualize
@@ -179,6 +202,35 @@ The GPU slug is auto-detected (e.g., `tesla_v100_sxm2_32gb`, `nvidia_a100_sxm4_8
 - [ ] GPU was idle during benchmarking (the script enforces this)
 - [ ] Used default settings (`make benchmark`)
 - [ ] Hardware JSON shows correct GPU info
+
+## CSV Output Columns
+
+Each row in the output CSV represents one benchmark configuration. Key columns:
+
+| Column | Description |
+|--------|-------------|
+| `model_name` | timm model identifier |
+| `display_name` | Human-readable model name |
+| `model_family`, `model_type` | Architecture family and type (cnn/vit/hybrid) |
+| `task` | `classification` or `segmentation` |
+| `precision` | `fp32`, `fp16`, `bf16`, or `amp` |
+| `compiled`, `compile_mode` | Whether `torch.compile` was used and which mode |
+| `gpu_name`, `gpu_mem_gb` | GPU hardware info |
+| `batch_size` | Batch size used |
+| `throughput_mean` | Mean throughput (images/sec) |
+| `pixels_per_sec` | Throughput in pixels/sec |
+| `latency_mean_ms` | Mean per-batch latency (ms) |
+| `latency_p50_ms` | Median (p50) per-batch latency (ms) |
+| `latency_p95_ms` | 95th percentile per-batch latency (ms) |
+| `latency_p99_ms` | 99th percentile per-batch latency (ms) |
+| `params_M` | Model parameters (millions) |
+| `macs_G` | Multiply-accumulate operations (billions) |
+| `peak_memory_mb` | Peak GPU memory during inference (MB) |
+| `tf32_enabled` | Whether TF32 tensor cores were active for fp32 matmuls |
+| `input_channels` | Number of input channels (default: 3) |
+| `input_size` | Spatial input resolution (default: 224) |
+| `pytorch_version`, `cuda_version` | Software versions |
+| `timestamp` | When the benchmark was run |
 
 ## Adding Custom Models
 
