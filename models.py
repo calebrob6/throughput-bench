@@ -196,9 +196,19 @@ MODEL_REGISTRY: list[ModelConfig] = [
         native_size=144, geo_model_key="senpamae",
     ),
     ModelConfig(
-        "galileo_s2", "Galileo-S2", "Galileo", "vit", FAMILY_COLORS["Galileo"],
+        "galileo_nano", "Galileo-Nano", "Galileo", "vit", FAMILY_COLORS["Galileo"],
         supports_segmentation=False, source="geo", native_channels=10,
-        native_size=64, geo_model_key="galileo_s2",
+        native_size=64, geo_model_key="galileo_nano",
+    ),
+    ModelConfig(
+        "galileo_base", "Galileo-Base", "Galileo", "vit", FAMILY_COLORS["Galileo"],
+        supports_segmentation=False, source="geo", native_channels=10,
+        native_size=64, geo_model_key="galileo_base",
+    ),
+    ModelConfig(
+        "galileo_large", "Galileo-Large", "Galileo", "vit", FAMILY_COLORS["Galileo"],
+        supports_segmentation=False, source="geo", native_channels=10,
+        native_size=64, geo_model_key="galileo_large",
     ),
     ModelConfig(
         "olmoearth_nano", "OlmoEarth-Nano", "OlmoEarth", "vit",

@@ -88,26 +88,32 @@ class CROMAWrapper(nn.Module):
 class GalileoWrapper(nn.Module):
     """Galileo — time-aware ViT for Sentinel data.
 
-    Uses geobreeze's Galileo class which handles input formatting internally.
-    For benchmarking, we bypass weight loading and use the encoder directly.
+    Uses geobreeze's Galileo encoder with official model configs from
+    nasaharvest/galileo (Nano/Base/Large).
     """
 
-    def __init__(self, input_key: str = "s2", image_resolution: int = 64):
+    # Official Galileo model configs
+    CONFIGS = {
+        "nano": dict(embedding_size=128, depth=4, num_heads=8, mlp_ratio=4),
+        "base": dict(embedding_size=768, depth=12, num_heads=12, mlp_ratio=4),
+        "large": dict(embedding_size=1280, depth=24, num_heads=16, mlp_ratio=4),
+    }
+
+    def __init__(
+        self, size: str = "base", input_key: str = "s2", image_resolution: int = 64
+    ):
         super().__init__()
         from geobreeze.models.galileo_src.model import Encoder
 
+        if size not in self.CONFIGS:
+            raise ValueError(f"Unknown Galileo size: {size}")
+
         self.encoder = Encoder(
-            max_patch_size=8,
-            embedding_size=768,
-            depth=12,
-            mlp_ratio=4,
-            num_heads=12,
-            max_sequence_length=1,
+            max_patch_size=8, max_sequence_length=1, **self.CONFIGS[size]
         )
         self.input_key = input_key
         self.image_resolution = image_resolution
 
-        # Import format_input from geobreeze Galileo
         from geobreeze.models.galileo import Galileo as GalileoModel
 
         self._format_input = GalileoModel.format_input
@@ -115,8 +121,6 @@ class GalileoWrapper(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         formatted = self._format_input(self, x, self.input_key)
         out = self.encoder(patch_size=8, **formatted)
-        # out is a tuple: (s_t_tokens, sp_tokens, t_tokens, st_tokens, ...masks)
-        # Take spatial-temporal tokens and mean pool
         s_t_tokens = out[0]  # (B, pH, pW, T, bands, embed)
         return s_t_tokens.mean(dim=(1, 2, 3, 4))
 
@@ -294,14 +298,34 @@ GEO_MODEL_REGISTRY: dict[str, dict] = {
         "params_approx": 95,
         "fp32_only": True,
     },
-    "galileo_s2": {
+    "galileo_nano": {
         "cls": GalileoWrapper,
-        "kwargs": {"input_key": "s2", "image_resolution": 64},
+        "kwargs": {"size": "nano", "input_key": "s2", "image_resolution": 64},
         "channels": 10,
         "size": 64,
         "family": "Galileo",
-        "display": "Galileo-S2",
+        "display": "Galileo-Nano",
+        "params_approx": 1,
+        "fp32_only": True,
+    },
+    "galileo_base": {
+        "cls": GalileoWrapper,
+        "kwargs": {"size": "base", "input_key": "s2", "image_resolution": 64},
+        "channels": 10,
+        "size": 64,
+        "family": "Galileo",
+        "display": "Galileo-Base",
         "params_approx": 87,
+        "fp32_only": True,
+    },
+    "galileo_large": {
+        "cls": GalileoWrapper,
+        "kwargs": {"size": "large", "input_key": "s2", "image_resolution": 64},
+        "channels": 10,
+        "size": 64,
+        "family": "Galileo",
+        "display": "Galileo-Large",
+        "params_approx": 380,
         "fp32_only": True,
     },
     # olmoearth models (fp32_only — custom FlexiViT with dtype issues in LayerNorm)
