@@ -349,7 +349,66 @@ input[type="range"]::-moz-range-thumb {
   #panel { width: calc(100vw - 40px); max-height: 45vh; overflow-y: auto; }
   #hud { top: auto; bottom: 64px; left: 20px; right: 20px; }
   .chip { flex: 1; min-width: 0; }
+}/* List Data modal */
+#list-overlay {
+  position: fixed; inset: 0;
+  background: rgba(14, 11, 8, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 55;
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px;
+  animation: fadeSlide 280ms ease-out;
 }
+#list-overlay.hidden { display: none; }
+.list-inner {
+  width: 100%; max-width: 1200px; height: 100%; max-height: 820px;
+  padding: 24px 28px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.list-scroll { flex: 1; overflow: auto; min-height: 0;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-sm);
+}
+table.data-table {
+  width: 100%; border-collapse: collapse;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+table.data-table th, table.data-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  white-space: nowrap;
+}
+table.data-table td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+table.data-table th:not(:first-child) { text-align: right; }
+table.data-table thead th {
+  position: sticky; top: 0;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+}
+table.data-table thead th:hover { color: var(--text); }
+table.data-table thead th .sort-ind {
+  margin-left: 6px; color: var(--accent); font-size: 0.7rem;
+}
+table.data-table tbody tr:hover { background: rgba(255,255,255,0.025); }
+table.data-table td.missing { color: var(--muted); }
+.list-sub {
+  margin-top: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.64rem; letter-spacing: 0.12em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
 </style>
 </head>
 <body>
@@ -359,6 +418,11 @@ input[type="range"]::-moz-range-thumb {
 
 <div id="panel" class="glass">
   <h1 class="brand">ThroughputBencher<span class="sub">Globe Race</span></h1>
+
+  <div>
+    <label>GPU</label>
+    <select id="sel-gpu"></select>
+  </div>
 
   <div>
     <label>Sensor · GSD</label>
@@ -387,6 +451,7 @@ input[type="range"]::-moz-range-thumb {
 
   <button id="btn-race" class="btn-race">▶ Start Race</button>
   <button id="btn-explore" class="btn-ghost">Explore data</button>
+  <button id="btn-list" class="btn-ghost">List data</button>
 
   <div id="result"></div>
 </div>
@@ -401,6 +466,10 @@ input[type="range"]::-moz-range-thumb {
       <button id="explore-close" class="close-btn" aria-label="Close">×</button>
     </div>
     <div class="explore-controls">
+      <div class="ctl">
+        <label>GPU</label>
+        <select id="plot-gpu"></select>
+      </div>
       <div class="ctl">
         <label>X axis</label>
         <select id="plot-x">
@@ -420,6 +489,21 @@ input[type="range"]::-moz-range-thumb {
     <div class="explore-plots">
       <div id="plot-bar" class="plot-card"></div>
       <div id="plot-scatter" class="plot-card"></div>
+    </div>
+  </div>
+</div>
+
+<div id="list-overlay" class="hidden">
+  <div class="list-inner glass">
+    <div class="explore-hdr">
+      <div>
+        <h2>Models × GPU architectures</h2>
+        <div class="list-sub">Best throughput (img/s) per model on each GPU · click a column header to sort</div>
+      </div>
+      <button id="list-close" class="close-btn" aria-label="Close">×</button>
+    </div>
+    <div class="list-scroll">
+      <table class="data-table" id="list-table"></table>
     </div>
   </div>
 </div>
@@ -444,8 +528,8 @@ input[type="range"]::-moz-range-thumb {
 <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
 <script type="module">
 
-// ── Model defaults (overridden by CSV if available) ────────────────────────
-let MODELS = [
+// ── Model defaults (used when no CSV data is available) ───────────────────
+const DEFAULT_MODELS = [
   { name:"mobilenetv3_small_100", display:"MobileNetV3-S", family:"MobileNet", type:"cnn", throughput:21732 },
   { name:"resnet18", display:"ResNet-18", family:"ResNet", type:"cnn", throughput:9847 },
   { name:"regnety_004", display:"RegNetY-400MF", family:"RegNet", type:"cnn", throughput:9573 },
@@ -476,11 +560,14 @@ let MODELS = [
   { name:"swin_large_patch4_window7_224", display:"Swin-L", family:"Swin", type:"vit", throughput:372 },
   { name:"vit_large_patch16_224", display:"ViT-L/16", family:"ViT", type:"vit", throughput:354 },
 ];
+let MODELS = DEFAULT_MODELS.slice();
 
 // Results live at results/{gpu_slug}.csv with a sidecar
-// {gpu_slug}_hardware.json. An optional results/index.json can list multiple
-// CSVs; otherwise we probe a small list of known paths.
+// {gpu_slug}_hardware.json. results/index.json lists all available GPU runs.
 let HARDWARE = null;
+// All GPU result sets: [{ key, label, csv, hardware, models: [ {name, display, family, type, throughput, params_M, macs_G, peak_mb}, ... ] }]
+let GPU_RESULTS = [];
+let ACTIVE_GPU_KEY = null;
 
 async function parseCSV(text) {
   const lines = text.trim().split('\n');
@@ -497,82 +584,91 @@ async function parseCSV(text) {
   return rows;
 }
 
-async function resolveCSVPath() {
-  // 1. Optional manifest listing CSVs (array of filenames or {csv, hardware}).
-  try {
-    const r = await fetch('../results/index.json');
-    if (r.ok) {
-      const list = await r.json();
-      if (Array.isArray(list) && list.length) {
-        const first = list[0];
-        return typeof first === 'string'
-          ? '../results/' + first
-          : '../results/' + first.csv;
-      }
+// Build a models array by merging defaults with rows, keeping best throughput per model.
+function modelsFromRows(rows, defaults) {
+  const byName = Object.fromEntries(defaults.map(m => [m.name, { ...m, _fromCSV: false }]));
+  for (const row of rows) {
+    if (row.task !== 'classification') continue;
+    const tp = parseFloat(row.throughput_mean);
+    if (!isFinite(tp)) continue;
+    const key = row.model_name;
+    const prev = byName[key];
+    if (prev && prev._fromCSV && prev.throughput >= tp) {
+      prev.params_M ??= parseFloat(row.params_M) || null;
+      prev.macs_G   ??= parseFloat(row.macs_G)   || null;
+      prev.peak_mb  ??= parseFloat(row.peak_memory_mb) || null;
+      continue;
     }
-  } catch (_) {}
-
-  // 2. Known-good candidates (current + legacy).
-  const candidates = [
-    '../results/tesla_v100_sxm2_32gb.csv',
-    '../results/benchmark_results.csv',
-  ];
-  for (const url of candidates) {
-    try {
-      const r = await fetch(url, { method: 'HEAD' });
-      if (r.ok) return url;
-    } catch (_) {}
+    byName[key] = {
+      name: key,
+      display: row.display_name || prev?.display || key,
+      family:  row.model_family || prev?.family  || 'Unknown',
+      type:    row.model_type   || prev?.type    || 'cnn',
+      throughput: tp,
+      params_M: parseFloat(row.params_M) || prev?.params_M || null,
+      macs_G:   parseFloat(row.macs_G)   || prev?.macs_G   || null,
+      peak_mb:  parseFloat(row.peak_memory_mb) || null,
+      _fromCSV: true,
+    };
   }
-  return null;
+  // Only keep models actually measured in this CSV (drop untouched defaults so
+  // cross-GPU tables correctly show "-" for models not run on that GPU).
+  return Object.values(byName)
+    .filter(m => m._fromCSV)
+    .sort((a, b) => b.throughput - a.throughput);
 }
 
-async function loadCSVResults() {
-  const url = await resolveCSVPath();
-  if (!url) return;
+async function loadOneGPU(entry) {
+  const csvUrl = '../results/' + entry.csv;
+  const hwUrl  = entry.hardware ? '../results/' + entry.hardware
+                               : csvUrl.replace(/\.csv$/, '_hardware.json');
+  let models = [], hardware = null;
   try {
-    const r = await fetch(url);
-    if (!r.ok) return;
-    const rows = await parseCSV(await r.text());
-    if (!rows.length) return;
-
-    // Merge CSV rows into defaults rather than replace, so models missing
-    // from a partial run still appear in the picker.
-    const byName = Object.fromEntries(MODELS.map(m => [m.name, { ...m }]));
-    for (const row of rows) {
-      if (row.task !== 'classification') continue;
-      const tp = parseFloat(row.throughput_mean);
-      if (!isFinite(tp)) continue;
-      const key = row.model_name;
-      const prev = byName[key];
-      // Keep the best (highest) throughput across precision/compile/bs combos.
-      if (prev && prev._fromCSV && prev.throughput >= tp) {
-        // Still capture params/macs/mem from any row even if not the best TP.
-        prev.params_M ??= parseFloat(row.params_M) || null;
-        prev.macs_G   ??= parseFloat(row.macs_G)   || null;
-        prev.peak_mb  ??= parseFloat(row.peak_memory_mb) || null;
-        continue;
-      }
-      byName[key] = {
-        name: key,
-        display: row.display_name || prev?.display || key,
-        family:  row.model_family || prev?.family  || 'Unknown',
-        type:    row.model_type   || prev?.type    || 'cnn',
-        throughput: tp,
-        params_M: parseFloat(row.params_M) || prev?.params_M || null,
-        macs_G:   parseFloat(row.macs_G)   || prev?.macs_G   || null,
-        peak_mb:  parseFloat(row.peak_memory_mb) || null,
-        _fromCSV: true,
-      };
+    const r = await fetch(csvUrl);
+    if (r.ok) {
+      const rows = await parseCSV(await r.text());
+      models = modelsFromRows(rows, DEFAULT_MODELS);
     }
-    MODELS = Object.values(byName).sort((a, b) => b.throughput - a.throughput);
+  } catch (_) {}
+  try {
+    const hr = await fetch(hwUrl);
+    if (hr.ok) hardware = await hr.json();
+  } catch (_) {}
+  const label = entry.label || hardware?.gpu_name || entry.csv.replace(/\.csv$/, '');
+  return { key: entry.csv, label, csv: entry.csv, hardware, models };
+}
 
-    // Sidecar hardware info, if present (same basename + _hardware.json).
-    try {
-      const hwUrl = url.replace(/\.csv$/, '_hardware.json');
-      const hwResp = await fetch(hwUrl);
-      if (hwResp.ok) HARDWARE = await hwResp.json();
-    } catch (_) {}
-  } catch (_) { /* fall back to defaults */ }
+async function loadAllGPUResults() {
+  // 1. Manifest lists all GPU runs.
+  let manifest = null;
+  try {
+    const r = await fetch('../results/index.json');
+    if (r.ok) manifest = await r.json();
+  } catch (_) {}
+
+  if (!Array.isArray(manifest) || !manifest.length) {
+    // Fallback: probe a couple of known-good candidates, as before.
+    manifest = [];
+    for (const name of ['tesla_v100_sxm2_32gb.csv', 'benchmark_results.csv']) {
+      try {
+        const r = await fetch('../results/' + name, { method: 'HEAD' });
+        if (r.ok) manifest.push({ csv: name });
+      } catch (_) {}
+    }
+  }
+
+  // Normalize entries: allow bare strings or {csv, hardware, label}.
+  const entries = manifest.map(e => typeof e === 'string' ? { csv: e } : e);
+  const loaded = await Promise.all(entries.map(loadOneGPU));
+  GPU_RESULTS = loaded.filter(g => g.models.length > 0);
+
+  if (!GPU_RESULTS.length) return;
+
+  // Pick a sensible default: first entry in the manifest.
+  ACTIVE_GPU_KEY = GPU_RESULTS[0].key;
+  const first = GPU_RESULTS[0];
+  MODELS   = first.models.slice().sort((a, b) => b.throughput - a.throughput);
+  HARDWARE = first.hardware;
 }
 
 // ── Inline ray-casting point-in-polygon (no turf dep) ──────────────────────
@@ -735,16 +831,18 @@ map.jumpTo(START_VIEW);
 document.getElementById('loading').classList.add('hidden');
 
 // ── UI wiring ──────────────────────────────────────────────────────────────
-await loadCSVResults();
+await loadAllGPUResults();
 
 // Surface which hardware the numbers came from, right under the brand.
-if (HARDWARE?.gpu_name) {
+function updateBrandSub() {
   const sub = document.querySelector('.brand .sub');
-  if (sub) sub.textContent = HARDWARE.gpu_name;
+  if (sub) sub.textContent = HARDWARE?.gpu_name || 'Globe Race';
 }
+updateBrandSub();
 
 const $ = id => document.getElementById(id);
 const selA = $('sel-a'), selB = $('sel-b'), selGSD = $('sel-gsd');
+const selGpu = $('sel-gpu');
 const btnRace = $('btn-race'), resultEl = $('result');
 const kmA = $('km-a'), kmB = $('km-b');
 const pctA = $('pct-a'), pctB = $('pct-b');
@@ -752,6 +850,42 @@ const barA = $('bar-a'), barB = $('bar-b');
 const nameA = $('name-a'), nameB = $('name-b');
 const timerEl = $('timer'), multEl = $('mult');
 const slSpeed = $('sl-speed'), speedVal = $('speed-val');
+
+function populateGpuSelect() {
+  if (!GPU_RESULTS.length) {
+    selGpu.innerHTML = '<option value="">(no data)</option>';
+    selGpu.disabled = true;
+    const plotGpu = $('plot-gpu');
+    if (plotGpu) { plotGpu.innerHTML = selGpu.innerHTML; plotGpu.disabled = true; }
+    return;
+  }
+  const opts = GPU_RESULTS
+    .map(g => `<option value="${g.key}">${g.label}</option>`).join('');
+  selGpu.innerHTML = opts;
+  selGpu.value = ACTIVE_GPU_KEY;
+  const plotGpu = $('plot-gpu');
+  if (plotGpu) { plotGpu.innerHTML = opts; plotGpu.value = ACTIVE_GPU_KEY; }
+}
+
+function switchActiveGpu(key) {
+  const g = GPU_RESULTS.find(x => x.key === key);
+  if (!g) return;
+  ACTIVE_GPU_KEY = key;
+  MODELS = g.models.slice().sort((a, b) => b.throughput - a.throughput);
+  HARDWARE = g.hardware;
+  updateBrandSub();
+  populateSelects();
+  // Keep both GPU pickers in sync.
+  if (selGpu.value !== key) selGpu.value = key;
+  const plotGpu = $('plot-gpu');
+  if (plotGpu && plotGpu.value !== key) plotGpu.value = key;
+  // Reset race so new throughputs take effect on the next run.
+  if (typeof resetRace === 'function') resetRace();
+  // Re-render Explore plots if the modal is currently open.
+  if (!$('explore-overlay').classList.contains('hidden')) renderPlots();
+}
+
+selGpu.addEventListener('change', () => switchActiveGpu(selGpu.value));
 
 function currentSpeedup() { return Math.pow(10, parseFloat(slSpeed.value)); }
 function fmtSpeedup(x) {
@@ -1007,24 +1141,30 @@ async function renderPlots() {
     margin: { l: 64, r: 16, t: 20, b: 120 },
   };
 
-  // Scatter: X axis vs Y axis, colored by family
+  // Scatter: X axis vs Y axis, colored by family; points within a family
+  // are connected by a line, sorted along X to avoid self-crossing spaghetti.
   const scatterModels = MODELS.filter(m =>
     yValue(m, yAxis) != null && m[xAxis] != null && m[xAxis] > 0);
   const byFamS = groupByFamily(scatterModels);
-  const scatterTraces = Object.entries(byFamS).map(([fam, ms]) => ({
-    type: 'scatter',
-    mode: 'markers',
-    name: fam,
-    x: ms.map(m => m[xAxis]),
-    y: ms.map(m => yValue(m, yAxis)),
-    text: ms.map(m => m.display),
-    marker: { size: 13, color: FAMILY_COLORS[fam] || '#9a8f7a',
-              opacity: 0.88,
-              line: { color: 'rgba(255,255,255,0.25)', width: 1 } },
-    hovertemplate:
-      `<b>%{text}</b><br>${axisLabel(xAxis)}: %{x:,.2f}` +
-      `<br>${axisLabel(yAxis)}: %{y:,.1f}<extra>${fam}</extra>`,
-  }));
+  const scatterTraces = Object.entries(byFamS).map(([fam, ms]) => {
+    const sorted = [...ms].sort((a, b) => a[xAxis] - b[xAxis]);
+    const color = FAMILY_COLORS[fam] || '#9a8f7a';
+    return {
+      type: 'scatter',
+      mode: sorted.length > 1 ? 'lines+markers' : 'markers',
+      name: fam,
+      x: sorted.map(m => m[xAxis]),
+      y: sorted.map(m => yValue(m, yAxis)),
+      text: sorted.map(m => m.display),
+      marker: { size: 13, color,
+                opacity: 0.88,
+                line: { color: 'rgba(255,255,255,0.25)', width: 1 } },
+      line: { color, width: 1.5, shape: 'linear' },
+      hovertemplate:
+        `<b>%{text}</b><br>${axisLabel(xAxis)}: %{x:,.2f}` +
+        `<br>${axisLabel(yAxis)}: %{y:,.1f}<extra>${fam}</extra>`,
+    };
+  });
   const scatterLayout = {
     ...plotLayoutBase,
     xaxis: { ...plotLayoutBase.xaxis, type: 'log',
@@ -1037,6 +1177,109 @@ async function renderPlots() {
   Plotly.react('plot-bar', barTraces, barLayout, config);
   Plotly.react('plot-scatter', scatterTraces, scatterLayout, config);
 }
+
+// ── List data modal (cross-GPU comparison table) ───────────────────────────
+// State: current sort column index and direction.
+let listSortCol = 0;       // 0 = Model column; 1..N = GPU columns
+let listSortDir = 1;       // 1 = asc, -1 = desc
+// Collected rows for the table, captured on open and reused on re-sort.
+let listRows = [];
+let listColLabels = [];    // header labels for GPU columns
+
+function buildListData() {
+  // Rows: one per unique model across all GPUs.
+  // Map model_name -> { display, family, type, cells: { gpuKey: throughput } }
+  const byName = {};
+  for (const g of GPU_RESULTS) {
+    for (const m of g.models) {
+      const r = byName[m.name] ||= {
+        name: m.name,
+        display: m.display,
+        family: m.family,
+        type: m.type,
+        cells: {},
+      };
+      // Prefer the best throughput for this model on this GPU.
+      const prev = r.cells[g.key];
+      if (prev == null || m.throughput > prev) r.cells[g.key] = m.throughput;
+      // Fill display fields from whichever row has them.
+      if (!r.display && m.display) r.display = m.display;
+      if ((!r.family || r.family === 'Unknown') && m.family) r.family = m.family;
+    }
+  }
+  listRows = Object.values(byName);
+  listColLabels = GPU_RESULTS.map(g => g.label);
+}
+
+function sortListRows() {
+  const gpuKeys = GPU_RESULTS.map(g => g.key);
+  const dir = listSortDir;
+  listRows.sort((a, b) => {
+    if (listSortCol === 0) {
+      return dir * a.display.localeCompare(b.display);
+    }
+    const key = gpuKeys[listSortCol - 1];
+    const av = a.cells[key], bv = b.cells[key];
+    // Treat missing as lower than any numeric value.
+    const am = av == null, bm = bv == null;
+    if (am && bm) return 0;
+    if (am) return 1;  // missing always sinks to the bottom
+    if (bm) return -1;
+    return dir * (av - bv);
+  });
+}
+
+function renderListTable() {
+  const table = $('list-table');
+  const gpuKeys = GPU_RESULTS.map(g => g.key);
+  const indicator = (i) => i === listSortCol
+    ? `<span class="sort-ind">${listSortDir > 0 ? '▲' : '▼'}</span>` : '';
+
+  const thead = `<thead><tr>
+    <th data-col="0">Model${indicator(0)}</th>
+    ${listColLabels.map((lbl, i) => `<th data-col="${i + 1}">${lbl} (img/s)${indicator(i + 1)}</th>`).join('')}
+  </tr></thead>`;
+
+  const fmt = v => v == null ? '<span class="missing">—</span>' : Math.round(v).toLocaleString();
+  const tbody = '<tbody>' + listRows.map(r =>
+    `<tr><td>${r.display}</td>${
+      gpuKeys.map(k => {
+        const v = r.cells[k];
+        return `<td${v == null ? ' class="missing"' : ''}>${fmt(v)}</td>`;
+      }).join('')
+    }</tr>`
+  ).join('') + '</tbody>';
+
+  table.innerHTML = thead + tbody;
+
+  // Wire up sort on headers.
+  table.querySelectorAll('thead th').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = parseInt(th.dataset.col, 10);
+      if (col === listSortCol) listSortDir = -listSortDir;
+      else { listSortCol = col; listSortDir = col === 0 ? 1 : -1; }
+      sortListRows();
+      renderListTable();
+    });
+  });
+}
+
+function openListModal() {
+  buildListData();
+  // Default sort: first GPU column, descending throughput.
+  listSortCol = GPU_RESULTS.length > 0 ? 1 : 0;
+  listSortDir = listSortCol === 0 ? 1 : -1;
+  sortListRows();
+  renderListTable();
+  $('list-overlay').classList.remove('hidden');
+}
+function closeListModal() { $('list-overlay').classList.add('hidden'); }
+
+$('btn-list').addEventListener('click', openListModal);
+$('list-close').addEventListener('click', closeListModal);
+$('list-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'list-overlay') closeListModal();
+});
 
 $('btn-explore').addEventListener('click', async () => {
   $('explore-overlay').classList.remove('hidden');
@@ -1052,15 +1295,20 @@ $('explore-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'explore-overlay') $('explore-overlay').classList.add('hidden');
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $('explore-overlay').classList.add('hidden');
+  if (e.key === 'Escape') {
+    $('explore-overlay').classList.add('hidden');
+    $('list-overlay').classList.add('hidden');
+  }
 });
 $('plot-x').addEventListener('change', renderPlots);
 $('plot-y').addEventListener('change', renderPlots);
+$('plot-gpu').addEventListener('change', () => switchActiveGpu($('plot-gpu').value));
 selGSD.addEventListener('change', () => {
   if (!$('explore-overlay').classList.contains('hidden')) renderPlots();
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────
+populateGpuSelect();
 populateSelects();
 setCursors(-1, -1);
 requestAnimationFrame((t) => { prev = t; step(t); });
