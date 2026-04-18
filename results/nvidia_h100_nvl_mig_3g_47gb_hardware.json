@@ -1,0 +1,13 @@
+{
+  "gpu_name": "NVIDIA H100 NVL MIG 3g.47gb",
+  "gpu_mem_gb": 49.8,
+  "gpu_id_physical": 1,
+  "cuda_version": "12.8",
+  "pytorch_version": "2.10.0+cu128",
+  "timm_version": "1.0.26",
+  "smp_version": "0.5.0",
+  "python_version": "3.14.4",
+  "os": "Linux",
+  "cpu": "x86_64",
+  "cpu_count": 80
+}
