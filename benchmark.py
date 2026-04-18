@@ -1037,9 +1037,65 @@ def parse_args():
         default=224,
         help="Spatial input size (default: 224). Images are input_size × input_size.",
     )
+    p.add_argument(
+        "--geo-compare",
+        action="store_true",
+        help="Run geo foundation model comparison: benchmarks all geo models at "
+        "native input settings, then re-benchmarks timm models at each unique "
+        "geo input config (channels × size) for fair comparison. "
+        "Forces fp32, compile=none, classification only.",
+    )
     return p.parse_args()
+
+
+def run_geo_compare(args):
+    """Run geo foundation model comparison benchmark.
+
+    For each unique (channels, size) among geo models, benchmarks:
+    1. All geo models with that input config
+    2. All timm models at that same (channels, size) for fair comparison
+    """
+    from models import get_models
+
+    all_models = get_models()
+    geo_models = [m for m in all_models if m.source == "geo"]
+    timm_models = [m for m in all_models if m.source == "timm"]
+
+    # Collect unique input configs from geo models
+    input_configs: dict[tuple[int, int], list[str]] = {}
+    for m in geo_models:
+        key = (m.native_channels, m.native_size)
+        input_configs.setdefault(key, []).append(m.timm_name)
+
+    # Override args for geo comparison mode
+    args.tasks = ["classification"]
+    args.precisions = ["fp32"]
+    args.compile_modes = ["none"]
+
+    # Run 1: All geo models at their native settings
+    print("=" * 70)
+    print("  Phase 1: Geo foundation models (native input settings)")
+    print("=" * 70)
+    args.models = [m.timm_name for m in geo_models]
+    run_benchmark(args)
+
+    # Run 2: For each unique geo input config, run all timm models
+    timm_names = [m.timm_name for m in timm_models]
+    for (ch, sz), geo_names in sorted(input_configs.items()):
+        print()
+        print("=" * 70)
+        print(f"  Phase 2: Timm models at {ch}ch × {sz}×{sz}")
+        print(f"  (matching: {', '.join(geo_names)})")
+        print("=" * 70)
+        args.models = timm_names
+        args.input_channels = ch
+        args.input_size = sz
+        run_benchmark(args)
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_benchmark(args)
+    if args.geo_compare:
+        run_geo_compare(args)
+    else:
+        run_benchmark(args)

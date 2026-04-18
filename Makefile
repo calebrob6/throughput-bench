@@ -7,7 +7,7 @@
 GPU_ID ?= 0
 PYTHON ?= python
 
-.PHONY: setup benchmark benchmark-quick benchmark-compiled visualize lint format clean help
+.PHONY: setup benchmark benchmark-quick benchmark-compiled geobenchmark visualize lint format clean help
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -35,6 +35,9 @@ benchmark-quick:  ## Quick benchmark (4 models, 10s/config)
 	$(PYTHON) benchmark.py --gpu-id $(GPU_ID) \
 		--models resnet18 resnet50 efficientnet_b0 vit_base_patch16_224 \
 		--timed-seconds 10
+
+geobenchmark:  ## Geo foundation model comparison (geo models + timm baselines at matching inputs)
+	$(PYTHON) benchmark.py --gpu-id $(GPU_ID) --geo-compare
 
 visualize:  ## Generate charts from results/ CSVs
 	$(PYTHON) visualize.py
