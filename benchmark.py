@@ -368,6 +368,7 @@ def find_max_batch_size(
                 "canUse32BitIndexMath" in msg
                 or "32-bit indexing" in msg
                 or "INT_MAX" in msg
+                or "invalid configuration argument" in msg
             ):
                 break
             if "match" in msg and ("size" in msg or "shape" in msg):
@@ -674,10 +675,14 @@ def run_single_benchmark(
             print(f"\n    ⚠ torch.compile failed at runtime (skipping): {e}")
             return "COMPILE_ERROR"
         msg = str(e)
-        if "canUse32BitIndexMath" in msg or "32-bit indexing" in msg or "INT_MAX" in msg:
+        if (
+            "canUse32BitIndexMath" in msg
+            or "32-bit indexing" in msg
+            or "INT_MAX" in msg
+            or "invalid configuration argument" in msg
+        ):
             print(
-                "\n    ⚠ Batch size exceeds cuDNN 32-bit indexing limit "
-                "(~2.147B elements); skipping."
+                "\n    ⚠ CUDA kernel limit exceeded; skipping."
             )
             return "OOM"
         if "match" in msg and ("size" in msg or "shape" in msg):
