@@ -226,6 +226,26 @@ def estimate_macs(
     return fcm.get_total_flops() / 1e9
 
 
+def _timm_create_kwargs(
+    timm_name: str, input_channels: int, input_size: int
+) -> dict:
+    """Build kwargs for timm.create_model, adding img_size when needed.
+
+    ViT-like models (ViT, DeiT, Swin, BEiT, CoAtNet) embed the image size
+    in their patch embedding and need img_size to handle non-default inputs.
+    CNNs are resolution-agnostic and reject the parameter.
+    """
+    kwargs: dict = {"pretrained": False, "num_classes": 10, "in_chans": input_channels}
+    if input_size != 224:
+        # Models with patch embeddings need img_size; CNNs don't accept it
+        vit_prefixes = (
+            "vit_", "deit", "swin_", "beit_", "coatnet_", "maxvit_", "eva_",
+        )
+        if any(timm_name.startswith(p) for p in vit_prefixes):
+            kwargs["img_size"] = input_size
+    return kwargs
+
+
 def create_model_for_task(
     config: ModelConfig,
     task: str,
@@ -242,9 +262,13 @@ def create_model_for_task(
         return create_geo_model(config.geo_model_key, device)
 
     if task == "classification":
-        model = timm.create_model(
-            config.timm_name, pretrained=False, num_classes=10, in_chans=input_channels
-        )
+        try:
+            model = timm.create_model(
+                config.timm_name,
+                **_timm_create_kwargs(config.timm_name, input_channels, input_size),
+            )
+        except Exception:
+            return None  # Model incompatible with this input size
     elif task == "segmentation":
         import warnings
 
@@ -346,6 +370,9 @@ def find_max_batch_size(
                 or "INT_MAX" in msg
             ):
                 break
+            if "match" in msg and ("size" in msg or "shape" in msg):
+                # Model architecture incompatible with this input size
+                return 0
             raise
 
     return max_bs
@@ -653,6 +680,9 @@ def run_single_benchmark(
                 "(~2.147B elements); skipping."
             )
             return "OOM"
+        if "match" in msg and ("size" in msg or "shape" in msg):
+            print("\n    ⚠ Incompatible input size; skipping.")
+            return None
         raise
     finally:
         # Explicitly shut down DataLoader workers to free file descriptors
@@ -780,10 +810,17 @@ def run_benchmark(args):
                 cls_shape = (1, model_channels, model_size, model_size)
                 macs_g = estimate_macs(tmp, input_shape=cls_shape, device="cpu")
             else:
-                tmp = timm.create_model(
-                    mc.timm_name, pretrained=False, num_classes=10,
-                    in_chans=model_channels,
-                )
+                try:
+                    tmp = timm.create_model(
+                        mc.timm_name,
+                        **_timm_create_kwargs(mc.timm_name, model_channels, model_size),
+                    )
+                except Exception as e:
+                    print(
+                        f"  ⏭ Skipping (incompatible with "
+                        f"{model_channels}ch × {model_size}×{model_size}): {e}"
+                    )
+                    continue
                 tmp.eval()
                 params_m = count_params(tmp)
                 cls_shape = (1, model_channels, model_size, model_size)
