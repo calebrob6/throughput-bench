@@ -777,6 +777,8 @@ def run_benchmark(args):
                     row.get("task"),
                     row.get("precision"),
                     row.get("compile_mode"),
+                    int(row.get("input_channels", 3)),
+                    int(row.get("input_size", 224)),
                 )
                 completed_keys.add(key)
             print(f"📂 Found {len(completed_keys)} existing configs, will skip")
@@ -886,7 +888,10 @@ def run_benchmark(args):
                         completed += 1
                         label = f"  [{completed}] {task} | {prec} | compile={cm} | bs={bs}"
 
-                        config_key = (mc.timm_name, task, prec, cm)
+                        config_key = (
+                            mc.timm_name, task, prec, cm,
+                            model_channels, model_size,
+                        )
                         if config_key in completed_keys:
                             print(label, "... SKIP (already in CSV)")
                             continue
