@@ -914,8 +914,8 @@ def run_benchmark(args):
                             continue
 
                         if result == "OOM":
-                            # Step down batch size for compiled mode
-                            if cm != "none" and bs > 1:
+                            # Step down batch size and retry
+                            if bs > 1:
                                 stepped = bs // 2
                                 print(
                                     f"OOM → retrying bs={stepped}",
@@ -938,6 +938,9 @@ def run_benchmark(args):
                                     input_channels=model_channels,
                                     input_size=model_size,
                                 )
+                                if result and isinstance(result, dict):
+                                    # Update batch_size in result
+                                    bs = stepped
                             if result == "OOM" or result is None:
                                 print("OOM")
                                 # Write OOM row
