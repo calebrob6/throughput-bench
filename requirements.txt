@@ -1,0 +1,12 @@
+torch>=2.0.0
+timm>=1.0.0
+tqdm>=4.65.0
+
+# Geospatial foundation model wrappers (DOFA, CROMA, SenPaMAE, Galileo,
+# OlmoEarth) — required to use anything in geo_models.py / the geo entries
+# in models.MODEL_REGISTRY. These pull in extra dependencies (numpy, einops,
+# huggingface_hub, …) but are needed for `make benchmark` to cover all
+# models. Drop them if you only want the timm subset.
+omegaconf
+olmoearth-pretrain-minimal @ git+https://github.com/allenai/olmoearth_pretrain_minimal.git@main
+geobreeze @ git+https://github.com/geobreeze/geobreeze.git
