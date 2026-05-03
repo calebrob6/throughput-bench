@@ -2,6 +2,11 @@
 
 Each model entry defines the timm model name and display metadata. All
 benchmarks are encoder-only classification — no decoders are attached.
+
+`timm_name` doubles as the unique benchmark / CSV identifier. To benchmark
+a single timm architecture under multiple configurations (e.g. the same
+ViT-L body with different patch sizes), set `timm_factory_name` to the
+real timm model name and use a synthetic `timm_name` as the benchmark ID.
 """
 
 from dataclasses import dataclass
@@ -9,7 +14,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ModelConfig:
-    timm_name: str
+    timm_name: str  # also used as the benchmark / CSV identifier
     display_name: str
     family: str
     arch_type: str  # "cnn", "vit", "hybrid"
@@ -18,6 +23,16 @@ class ModelConfig:
     native_channels: int = 3
     native_size: int = 224
     geo_model_key: str = ""  # key into GEO_MODEL_REGISTRY
+    # Overrides for routing through timm.create_model — used when the
+    # benchmark ID can't be a real timm model name (e.g. a patch-size
+    # override that timm doesn't ship a pretrained checkpoint for).
+    timm_factory_name: str = ""
+    patch_size: int | None = None
+
+    @property
+    def timm_factory(self) -> str:
+        """The actual timm model name to pass to `timm.create_model`."""
+        return self.timm_factory_name or self.timm_name
 
 
 # Family color palette
@@ -32,6 +47,7 @@ FAMILY_COLORS = {
     "Swin": "#bcbd22",
     "BEiT": "#17becf",
     "CoAtNet": "#7f7f7f",
+    "DinoV3": "#1B998B",  # dark teal — modern self-supervised ViTs
     # Geo foundation model families. Colors picked to be visually distinct
     # from the timm families above (no near-duplicate hues).
     "DOFA": "#e6550d",  # dark orange (distinct from DeiT's bright orange)
@@ -118,6 +134,32 @@ MODEL_REGISTRY: list[ModelConfig] = [
         FAMILY_COLORS["ViT"],
     ),
     ModelConfig(
+        "vit_huge_patch14_224",
+        "ViT-H/14",
+        "ViT",
+        "vit",
+        FAMILY_COLORS["ViT"],
+    ),
+    ModelConfig(
+        "vit_giant_patch14_224",
+        "ViT-G/14",
+        "ViT",
+        "vit",
+        FAMILY_COLORS["ViT"],
+    ),
+    # Synthetic ID — uses ViT-L/16's body but overrides patch_size to 8 for
+    # an apples-to-apples compute comparison against OlmoEarth-Large/8 (same
+    # depth × dim, same ~768 spatial-token count, same ~470 GMACs at 224²).
+    ModelConfig(
+        "vit_large_patch8_224",
+        "ViT-L/8",
+        "ViT",
+        "vit",
+        FAMILY_COLORS["ViT"],
+        timm_factory_name="vit_large_patch16_224",
+        patch_size=8,
+    ),
+    ModelConfig(
         "deit3_small_patch16_224",
         "DeiT3-S/16",
         "DeiT",
@@ -148,6 +190,14 @@ MODEL_REGISTRY: list[ModelConfig] = [
         "BEiT",
         "vit",
         FAMILY_COLORS["BEiT"],
+    ),
+    # ── DinoV3 (Meta self-supervised ViTs) ────────────────────────────────
+    ModelConfig(
+        "vit_huge_plus_patch16_dinov3",
+        "DinoV3-H+/16",
+        "DinoV3",
+        "vit",
+        FAMILY_COLORS["DinoV3"],
     ),
     # ── Hybrids ───────────────────────────────────────────────────────────
     ModelConfig("coatnet_0_224", "CoAtNet-0", "CoAtNet", "hybrid", FAMILY_COLORS["CoAtNet"]),

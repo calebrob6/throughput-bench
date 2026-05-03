@@ -224,25 +224,26 @@ def estimate_macs(
 
 
 def _timm_create_kwargs(timm_name: str, input_channels: int, input_size: int) -> dict:
-    """Build kwargs for timm.create_model, adding img_size when needed.
+    """Build kwargs for timm.create_model, forcing img_size for ViT-like models.
 
-    ViT-like models (ViT, DeiT, Swin, BEiT, CoAtNet) embed the image size
-    in their patch embedding and need img_size to handle non-default inputs.
+    ViT-like models embed the image size in their patch embedding and accept
+    `img_size`. We always pass it (rather than relying on the model's default)
+    so that e.g. `vit_huge_plus_patch16_dinov3` (default 256) gets created at
+    our standard input shape instead of whatever the timm config bakes in.
     CNNs are resolution-agnostic and reject the parameter.
     """
     kwargs: dict = {"pretrained": False, "num_classes": 10, "in_chans": input_channels}
-    if input_size != 224:
-        vit_prefixes = (
-            "vit_",
-            "deit",
-            "swin_",
-            "beit_",
-            "coatnet_",
-            "maxvit_",
-            "eva_",
-        )
-        if any(timm_name.startswith(p) for p in vit_prefixes):
-            kwargs["img_size"] = input_size
+    vit_prefixes = (
+        "vit_",
+        "deit",
+        "swin_",
+        "beit_",
+        "coatnet_",
+        "maxvit_",
+        "eva_",
+    )
+    if any(timm_name.startswith(p) for p in vit_prefixes):
+        kwargs["img_size"] = input_size
     return kwargs
 
 
@@ -258,11 +259,11 @@ def create_model(
 
         return create_geo_model(config.geo_model_key, device)
 
+    kwargs = _timm_create_kwargs(config.timm_factory, input_channels, input_size)
+    if config.patch_size is not None:
+        kwargs["patch_size"] = config.patch_size
     try:
-        model = timm.create_model(
-            config.timm_name,
-            **_timm_create_kwargs(config.timm_name, input_channels, input_size),
-        )
+        model = timm.create_model(config.timm_factory, **kwargs)
     except Exception:
         return None  # Model incompatible with this input size
     model = model.to(device)
@@ -851,10 +852,10 @@ def run_benchmark(args):
 
                 tmp = create_geo_model(mc.geo_model_key, torch.device("cpu"))
             else:
-                tmp = timm.create_model(
-                    mc.timm_name,
-                    **_timm_create_kwargs(mc.timm_name, model_channels, model_size),
-                )
+                tmp_kwargs = _timm_create_kwargs(mc.timm_factory, model_channels, model_size)
+                if mc.patch_size is not None:
+                    tmp_kwargs["patch_size"] = mc.patch_size
+                tmp = timm.create_model(mc.timm_factory, **tmp_kwargs)
         except Exception as e:
             print(
                 f"  ⏭ Skipping all {len(tasks)} configs (model incompatible "

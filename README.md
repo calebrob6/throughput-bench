@@ -2,7 +2,7 @@
 
 **Jump to: [Quick start](#quick-start) | [Models](#models) | [Methodology](#methodology) | [Pixels → km²](#pixelssec--square-kilometers) | [Contributing results](#contributing-results) | [Citation](#citation)**
 
-A small CLI for measuring inference throughput (img/s) of vision backbones on a single GPU, with a focus on geospatial workloads. Covers **29 timm architectures** (ResNet, EfficientNet, ConvNeXt, MobileNet, RegNet, ViT, DeiT3, Swin, BEiT, CoAtNet) plus **12 geospatial foundation-model encoders** (DOFA, CROMA, SenPaMAE, Galileo, OlmoEarth) under fp32 / fp16 / bf16 / AMP and `torch.compile`. Results are appended to a per-GPU CSV ([NVIDIA H100 NVL](results/nvidia_h100_nvl.csv) · [Tesla V100-SXM2 32 GB](results/tesla_v100_sxm2_32gb.csv) so far); an interactive [Globe Race webapp](webapp/index.html) turns those numbers into "how fast can each backbone map the world?"
+A small CLI for measuring inference throughput (img/s) of vision backbones on a single GPU, with a focus on geospatial workloads. Covers **33 timm architectures** (ResNet, EfficientNet, ConvNeXt, MobileNet, RegNet, ViT including L/8 + H/14 + G/14, DeiT3, Swin, BEiT, DinoV3, CoAtNet) plus **12 geospatial foundation-model encoders** (DOFA, CROMA, SenPaMAE, Galileo, OlmoEarth) under fp32 / fp16 / bf16 / AMP and `torch.compile`. Results are appended to a per-GPU CSV ([NVIDIA H100 NVL](results/nvidia_h100_nvl.csv) · [Tesla V100-SXM2 32 GB](results/tesla_v100_sxm2_32gb.csv) so far); an interactive [Globe Race webapp](webapp/index.html) turns those numbers into "how fast can each backbone map the world?"
 
 <p align="center">
   <img src="images/throughput_bench.png" alt="Throughput Bench Globe Race screenshot" width="820">
@@ -63,11 +63,12 @@ sudo tdnf install -y binutils glibc-devel       # Azure Linux / RHEL family
 | ConvNeXt | T / S / B / L | CNN |
 | MobileNetV3 | Small / Large | CNN |
 | RegNetY | 400MF / 4GF | CNN |
-| ViT | Ti/16 / S/16 / B/16 / L/16 | ViT |
+| ViT | Ti/16 / S/16 / B/16 / L/16 / **L/8** / H/14 / G/14 | ViT |
 | DeiT3 | S/16 / B/16 | ViT |
 | Swin | T / S / B / L | ViT |
 | BEiT | B/16 / L/16 | ViT |
-| CoAtNet | 0 / 2 | Hybrid |
+| DinoV3 | H+/16 | ViT |
+| CoAtNet | CoAtNet-0 / CoAtNet-2 | Hybrid |
 | DOFA | B/16 / L/16 | Geo ViT |
 | CROMA | Optical / SAR | Geo ViT |
 | SenPaMAE | B/16 | Geo ViT |
