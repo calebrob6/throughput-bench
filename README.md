@@ -27,6 +27,7 @@ make benchmark ARGS="--models resnet18 olmoearth_nano --timed-seconds 10"
 make benchmark ARGS="--compile-modes default max-autotune"
 make benchmark ARGS="--input-channels 4 --input-size 128"
 make benchmark ARGS="--geo-compare"     # geo FMs + timm baselines at matching input shapes
+make benchmark ARGS="--data-mode spectral"  # per-band S2/Landsat inputs (recommended for geo ViTs)
 ```
 
 Re-running on the same GPU is a free no-op for already-completed configs: the script enumerates every `(model, precision, compile, channels, size)` combo up front, prints a one-line skip summary, and runs only what's missing.
@@ -84,7 +85,7 @@ Add new architectures by extending `MODEL_REGISTRY` in `models.py` (timm-compati
 - **Compile** — runs both `none` and `default` `torch.compile` modes by default; `max-autotune` available via `--compile-modes`.
 - **Batch size** — starts at the requested size (default 512) and halves on OOM until it fits or hits 1. Pass `--batch-sizes 1 8 32 64` to sweep.
 - **Timing** — 20 warmup iters, then ≥ 30 s of timed iters, wall-clock with `torch.cuda.synchronize()` at boundaries. Reports throughput, mean / p50 / p95 / p99 latency, peak GPU memory.
-- **Data** — pre-allocated GPU batch by default (peak compute throughput); pass `--dataloader` for the realistic end-to-end path that includes DataLoader IPC + host→device transfer. On a V100 the IPC overhead alone (~140 ms / batch at bs=512) roughly halves ResNet-18 throughput vs the pre-allocated path.
+- **Data** — pre-allocated GPU batch by default (peak compute throughput); pass `--dataloader` for the realistic end-to-end path that includes DataLoader IPC + host→device transfer. On a V100 the IPC overhead alone (~140 ms / batch at bs=512) roughly halves ResNet-18 throughput vs the pre-allocated path. `--data-mode` controls the synthetic input distribution: `randn` (default) uses standard-normal noise; `ones` uses a constant tensor (the original DataLoader default, fine for CNNs but produces degenerate uniform attention in ViTs); `spectral` samples each band from approximate Sentinel-2 / Landsat surface-reflectance statistics (per-band means and stds for 3, 4, 6, 7, 12, and 13 channels; arbitrary channel counts cycle through S2 stats) — recommended when benchmarking ViT-based geospatial FMs.
 - **Reproducibility** — every run also writes `results/<gpu_slug>_hardware.json` with driver / clocks / power-cap / git SHA.
 
 `benchmark_sanity_check.py` is a minimal standalone ResNet-18 timer for cross-checking against the main script.
