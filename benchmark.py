@@ -394,11 +394,19 @@ def benchmark_gpu_preallocated(
     min_timed_seconds: float = 30.0,
     input_channels: int = 3,
     input_size: int = 224,
+    data_mode: str = "randn",
 ) -> dict:
     """Benchmark on GPU with a pre-allocated batch (no DataLoader overhead)."""
+    from data import make_spectral_batch
+
     use_amp = precision == "amp"
 
-    images = torch.randn(batch_size, input_channels, input_size, input_size, device=device)
+    if data_mode == "spectral":
+        images = make_spectral_batch(batch_size, input_channels, input_size, device=device)
+    elif data_mode == "ones":
+        images = torch.ones(batch_size, input_channels, input_size, input_size, device=device)
+    else:
+        images = torch.randn(batch_size, input_channels, input_size, input_size, device=device)
     if precision == "fp16":
         images = images.half()
     elif precision == "bf16":
@@ -518,6 +526,7 @@ def run_single_benchmark(
                 min_timed_seconds=args.timed_seconds,
                 input_channels=input_channels,
                 input_size=input_size,
+                data_mode=args.data_mode,
             )
         else:
             dl = create_dataloader(
@@ -527,6 +536,7 @@ def run_single_benchmark(
                 length=max(batch_size * 500, 10_000),
                 channels=input_channels,
                 size=input_size,
+                data_mode=args.data_mode,
             )
             stats = benchmark_gpu(
                 model,
@@ -801,6 +811,7 @@ def run_benchmark(args):
     print(f"📋 Input: {input_channels}×{input_size}×{input_size}")
     print(f"📋 Batch sizes: {args.batch_sizes} (halve on OOM until it fits)")
     print(f"📋 Timed seconds: {args.timed_seconds}")
+    print(f"📋 Data mode: {args.data_mode}")
 
     # Load already-completed configs and decide up front what to run vs skip,
     # so a resumed benchmark doesn't pay any per-config / per-model overhead
@@ -1023,6 +1034,18 @@ def parse_args():
         type=int,
         default=224,
         help="Spatial input size (default: 224). Images are input_size × input_size.",
+    )
+    p.add_argument(
+        "--data-mode",
+        default="randn",
+        choices=["ones", "randn", "spectral"],
+        help=(
+            "Synthetic input distribution (default: randn). "
+            "'ones': constant tensor — fast but degenerate for ViT attention. "
+            "'randn': standard-normal noise. "
+            "'spectral': per-band normal samples approximating S2/Landsat surface reflectance "
+            "— recommended for ViT-based geospatial FMs."
+        ),
     )
     p.add_argument(
         "--geo-compare",
