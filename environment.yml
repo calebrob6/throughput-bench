@@ -11,6 +11,6 @@ dependencies:
     - torch>=2.0.0
     - timm>=1.0.0
     - tqdm>=4.65.0
-    - olmoearth-pretrain-minimal @ git+https://github.com/allenai/olmoearth_pretrain_minimal.git@main
+    - olmoearth-pretrain-minimal @ git+https://github.com/allenai/olmoearth_pretrain_minimal.git@v0.0.5
     - omegaconf
     - git+https://github.com/geobreeze/geobreeze.git
