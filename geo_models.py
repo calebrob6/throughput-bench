@@ -225,6 +225,82 @@ class OlmoEarthWrapper(nn.Module):
         return s2_tokens.mean(dim=(1, 2, 3, 4))  # (B, embed_dim)
 
 
+class OlmoEarthV1_1Wrapper(nn.Module):
+    """OlmoEarth v1.1 encoder wrapper for Sentinel-2 L2A (12 bands).
+
+    Same input/output contract as ``OlmoEarthWrapper`` — a ``(B, 12,
+    128, 128)`` tensor in, a ``(B, embed_dim)`` pooled S2 embedding out.
+    Built by going through ``load_model_from_id`` so the architecture
+    exactly matches the released checkpoint configs on Hugging Face
+    (``allenai/OlmoEarth-v1_1-{Nano,Tiny,Base}``). The raw
+    ``OlmoEarthPretrain_v1(model_version="v1.1")`` constructor uses
+    default-ish hyperparameters that don't quite match the released
+    artifacts; going through HF guarantees matching encoder param
+    counts (Nano 1.7M / Tiny 12.5M / Base 114M) whether or not weights
+    are loaded.
+
+    Compared to v1, v1.1 uses a single S2 bandset (12 bands in one
+    group) instead of three, so the mask is ``(B, H, W, T, 1)`` and the
+    forward output token tensor has ``bandsets=1`` in its fifth dim.
+    There is no v1.1 ``Large`` checkpoint.
+
+    Args:
+        model_size: One of ``nano``, ``tiny``, ``base``.
+        pretrained: When True (default), download the HF weights on
+            first use and cache them under ``~/.cache/huggingface``.
+            When False, build the same architecture from the HF config
+            with random init — useful for throughput-only benchmarks
+            that don't want a ~360 MB download for Base.
+    """
+
+    _MODEL_IDS = {
+        "nano": "OLMOEARTH_V1_1_NANO",
+        "tiny": "OLMOEARTH_V1_1_TINY",
+        "base": "OLMOEARTH_V1_1_BASE",
+    }
+
+    def __init__(self, model_size: str = "base", pretrained: bool = True):
+        super().__init__()
+        from olmoearth_pretrain_minimal.model_loader import (
+            ModelID,
+            load_model_from_id,
+        )
+
+        if model_size not in self._MODEL_IDS:
+            raise ValueError(
+                f"Unknown OlmoEarth v1.1 size: {model_size!r}. "
+                f"Must be one of {list(self._MODEL_IDS)}"
+            )
+        model_id = getattr(ModelID, self._MODEL_IDS[model_size])
+        full = load_model_from_id(model_id, load_weights=pretrained)
+        # Drop the pretraining decoder + target_encoder; we only want the encoder.
+        self.encoder = full.encoder
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from olmoearth_pretrain_minimal.olmoearth_pretrain_v1.utils.datatypes import (
+            MaskedOlmoEarthSample,
+        )
+
+        B, C, H, W = x.shape
+        # (B, C, H, W) → (B, H, W, T=1, C=12)
+        x_bhwtc = x.permute(0, 2, 3, 1).unsqueeze(3)
+
+        timestamps = torch.zeros(B, 1, 3, dtype=torch.long, device=x.device)
+        # v1.1 collapses S2 into a single bandset, so num_bandsets=1.
+        mask = torch.zeros(B, H, W, 1, 1, dtype=torch.bool, device=x.device)
+
+        sample = MaskedOlmoEarthSample(
+            timestamps=timestamps,
+            sentinel2_l2a=x_bhwtc,
+            sentinel2_l2a_mask=mask,
+        )
+
+        out = self.encoder(sample, patch_size=8, input_res=10, fast_pass=True)
+        tam = out["tokens_and_masks"]
+        s2_tokens = tam.sentinel2_l2a  # (B, pH, pW, T, bandsets=1, embed)
+        return s2_tokens.mean(dim=(1, 2, 3, 4))  # (B, embed_dim)
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -357,6 +433,39 @@ GEO_MODEL_REGISTRY: dict[str, dict] = {
         "family": "OlmoEarth",
         "display": "OlmoEarth-Large/8",
         "params_approx": 308,
+        "supported_precisions": ALL_PRECISIONS,
+    },
+    # OlmoEarth v1.1 — pretrained weights downloaded from HF on first use
+    # (allenai/OlmoEarth-v1_1-{Nano,Tiny,Base}). Requires
+    # olmoearth_pretrain_minimal>=0.0.5. No Large checkpoint released.
+    "olmoearth_v1_1_nano": {
+        "cls": OlmoEarthV1_1Wrapper,
+        "kwargs": {"model_size": "nano"},
+        "channels": 12,
+        "size": 128,
+        "family": "OlmoEarth",
+        "display": "OlmoEarth-v1.1-Nano/8",
+        "params_approx": 1.7,
+        "supported_precisions": ALL_PRECISIONS,
+    },
+    "olmoearth_v1_1_tiny": {
+        "cls": OlmoEarthV1_1Wrapper,
+        "kwargs": {"model_size": "tiny"},
+        "channels": 12,
+        "size": 128,
+        "family": "OlmoEarth",
+        "display": "OlmoEarth-v1.1-Tiny/8",
+        "params_approx": 12.5,
+        "supported_precisions": ALL_PRECISIONS,
+    },
+    "olmoearth_v1_1_base": {
+        "cls": OlmoEarthV1_1Wrapper,
+        "kwargs": {"model_size": "base"},
+        "channels": 12,
+        "size": 128,
+        "family": "OlmoEarth",
+        "display": "OlmoEarth-v1.1-Base/8",
+        "params_approx": 114,
         "supported_precisions": ALL_PRECISIONS,
     },
 }

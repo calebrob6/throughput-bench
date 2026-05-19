@@ -41,7 +41,9 @@ pip install git+https://github.com/allenai/olmoearth_pretrain_minimal.git@main
 pip install git+https://github.com/geobreeze/geobreeze.git
 ```
 
-The git pin on `olmoearth_pretrain_minimal` is intentional — the PyPI release (≤ 0.0.3) misses the dtype-safe `CompositeEncodings` fix from [PR #10](https://github.com/allenai/olmoearth_pretrain_minimal/pull/10), without which OlmoEarth crashes under `.half()` / `.bfloat16()`. Per-model precision support lives in `geo_models.GEO_MODEL_REGISTRY[name]['supported_precisions']` (DOFA / CROMA / Galileo are fp32 + AMP only because of upstream dtype issues; OlmoEarth + SenPaMAE support all four).
+The git pin on `olmoearth_pretrain_minimal` is intentional — we need ≥ 0.0.5, which includes both the dtype-safe `CompositeEncodings` fix from [PR #10](https://github.com/allenai/olmoearth_pretrain_minimal/pull/10) (otherwise OlmoEarth-v1 crashes under `.half()` / `.bfloat16()`) and the v1.1 architecture / `ModelID.OLMOEARTH_V1_1_*` HF loaders. Per-model precision support lives in `geo_models.GEO_MODEL_REGISTRY[name]['supported_precisions']` (DOFA / CROMA / Galileo are fp32 + AMP only because of upstream dtype issues; OlmoEarth + SenPaMAE support all four).
+
+The OlmoEarth v1.1 entries download pretrained weights from Hugging Face on first use (`allenai/OlmoEarth-v1_1-{Nano,Tiny,Base}`, cached locally). Pass `pretrained=False` to `OlmoEarthV1_1Wrapper` to skip the download and use the same architecture with random init.
 
 ### `torch.compile` system requirements
 
@@ -74,6 +76,7 @@ sudo tdnf install -y binutils glibc-devel       # Azure Linux / RHEL family
 | SenPaMAE | B/16 | Geo ViT |
 | Galileo | Nano/8 / Base/8 / Large/8 | Geo ViT |
 | OlmoEarth | Nano/8 / Tiny/8 / Base/8 / Large/8 | Geo ViT |
+| OlmoEarth v1.1 | Nano/8 / Tiny/8 / Base/8 | Geo ViT |
 
 Add new architectures by extending `MODEL_REGISTRY` in `models.py` (timm-compatible names) or `GEO_MODEL_REGISTRY` in `geo_models.py` (custom wrappers).
 
