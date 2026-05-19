@@ -37,7 +37,7 @@ The geo wrappers in `geo_models.py` need extra dependencies (Python ≥ 3.11, < 
 
 ```bash
 pip install omegaconf
-pip install git+https://github.com/allenai/olmoearth_pretrain_minimal.git@main
+pip install git+https://github.com/allenai/olmoearth_pretrain_minimal.git@v0.0.5
 pip install git+https://github.com/geobreeze/geobreeze.git
 ```
 
